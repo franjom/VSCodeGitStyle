@@ -414,6 +414,24 @@ body {
   font-weight: 600;
 }
 
+/* Language tag standing in for a file icon; its colour is set inline, so it
+   deliberately survives row selection the way a real icon would. */
+.row .file-badge {
+  flex: 0 0 18px;
+  margin-right: 4px;
+  text-align: center;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.3px;
+  overflow: hidden;
+}
+
+.row.selected .label,
+.row.selected .status-letter {
+  color: var(--vsg-active-fg);
+}
+
 .row.file .icon {
   color: var(--vscode-icon-foreground, #9d9d9d);
 }

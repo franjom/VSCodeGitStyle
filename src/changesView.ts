@@ -34,6 +34,7 @@ type Inbound =
   | { type: 'stage'; paths: string[] }
   | { type: 'unstage'; paths: string[] }
   | { type: 'discard'; path: string }
+  | { type: 'discardFolder'; path: string }
   | { type: 'stashPush' }
   | { type: 'stash'; op: 'apply' | 'pop' | 'drop'; index: number }
   | { type: 'stashClear' }
@@ -234,6 +235,10 @@ export class ChangesViewProvider implements vscode.WebviewViewProvider {
           await this.discard(root, message.path);
           break;
 
+        case 'discardFolder':
+          await this.discardFolder(root, message.path);
+          break;
+
         case 'stashPush':
           await this.stashPush(root);
           break;
@@ -322,6 +327,57 @@ export class ChangesViewProvider implements vscode.WebviewViewProvider {
     }
 
     await this.git.discard(root, change);
+  }
+
+  /**
+   * Reverts every change under one folder. Untracked files inside it can only
+   * be "reverted" by deleting them, so they are counted separately and spelled
+   * out in the prompt rather than quietly removed.
+   */
+  private async discardFolder(root: string, folder: string): Promise<void> {
+    const snapshot = await this.git.snapshot(root, false);
+    const prefix = folder.endsWith('/') ? folder : `${folder}/`;
+    const inFolder = (change: { path: string }) => change.path.startsWith(prefix);
+
+    const unstaged = snapshot.unstaged.filter(inFolder);
+    const staged = snapshot.staged.filter(inFolder);
+    const untracked = unstaged.filter(
+      (c) => c.status === 'untracked' || c.status === 'ignored'
+    );
+    const tracked = unstaged.filter((c) => !untracked.includes(c));
+
+    const affected = new Set([...unstaged, ...staged].map((c) => c.path));
+    if (affected.size === 0) {
+      return;
+    }
+
+    const lines = [`Discard all changes in ${folder}?`, ''];
+    lines.push(`${affected.size} file(s) affected.`);
+    if (untracked.length) {
+      lines.push(`${untracked.length} untracked file(s) will be deleted.`);
+    }
+    lines.push('This cannot be undone.');
+
+    const answer = await vscode.window.showWarningMessage(
+      lines[0],
+      { modal: true, detail: lines.slice(2).join(String.fromCharCode(10)) },
+      'Discard Changes'
+    );
+    if (answer !== 'Discard Changes') {
+      return;
+    }
+
+    if (staged.length) {
+      await this.git.unstage(root, [folder]);
+    }
+    if (tracked.length || staged.length) {
+      // checkout fails on a pathspec matching nothing git tracks, so only run
+      // it when the folder actually holds tracked changes.
+      await this.git.exec(root, ['checkout', '-q', '--', folder]);
+    }
+    if (untracked.length) {
+      await this.git.exec(root, ['clean', '-fdq', '--', folder]);
+    }
   }
 
   private async stashPush(root: string): Promise<void> {

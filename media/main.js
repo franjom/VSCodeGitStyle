@@ -446,6 +446,7 @@
   }
 
   function renderNodes(container, nodes, depth, prefix) {
+    const isStagedSection = prefix.indexOf('staged') === 0;
     for (const node of nodes) {
       if (node.kind === 'folder') {
         const key = prefix + node.key;
@@ -462,6 +463,30 @@
         folderRow.addEventListener('click', function () {
           toggle(key, open);
         });
+
+        // Whole-folder actions on hover, as Visual Studio offers.
+        folderRow.appendChild(el('span', 'spacer'));
+        const folderActions = el('div', 'row-actions');
+        if (isStagedSection) {
+          folderActions.appendChild(
+            iconButton('remove', 'Unstage this folder', function () {
+              post({ type: 'unstage', paths: [node.key] });
+            })
+          );
+        } else {
+          folderActions.appendChild(
+            iconButton('discard', 'Discard changes in this folder', function () {
+              post({ type: 'discardFolder', path: node.key });
+            })
+          );
+          folderActions.appendChild(
+            iconButton('add', 'Stage this folder', function () {
+              post({ type: 'stage', paths: [node.key] });
+            })
+          );
+        }
+        folderRow.appendChild(folderActions);
+
         container.appendChild(folderRow);
         if (open) {
           renderNodes(container, node.children, depth + 1, prefix);
@@ -495,11 +520,126 @@
       node.setAttribute('aria-expanded', String(open));
     }
 
-    const iconWrap = el('span', 'icon' + (statusClass ? ' ' + statusClass : ''));
-    iconWrap.appendChild(icon(codicon));
-    node.appendChild(iconWrap);
+    if (codicon) {
+      const iconWrap = el('span', 'icon' + (statusClass ? ' ' + statusClass : ''));
+      iconWrap.appendChild(icon(codicon));
+      node.appendChild(iconWrap);
+    }
     node.appendChild(el('span', 'label', label));
     return node;
+  }
+
+  // ---------------------------------------------------------- file type icons
+
+  // VS Code gives webviews no access to the active file icon theme, so the
+  // badge is built here: a short language tag in that language's own colour,
+  // which is what Visual Studio's "JS" marker amounts to. Anything unmapped
+  // falls back to a plain file codicon.
+  const FILE_TYPES = [
+    [['ts'], 'TS', '#3178c6'],
+    [['tsx'], 'TSX', '#3178c6'],
+    [['js', 'mjs', 'cjs'], 'JS', '#e8d44d'],
+    [['jsx'], 'JSX', '#e8d44d'],
+    [['cs'], 'C#', '#a074c4'],
+    [['csproj', 'sln', 'props', 'targets'], 'PRJ', '#a074c4'],
+    [['vb'], 'VB', '#a074c4'],
+    [['json', 'jsonc'], '{ }', '#cbcb41'],
+    [['html', 'htm', 'cshtml', 'razor'], '<>', '#e37933'],
+    [['css'], 'CSS', '#6bb3e8'],
+    [['scss', 'sass', 'less'], 'SCS', '#cf649a'],
+    [['xml', 'xsd', 'xslt', 'config', 'axaml', 'xaml'], 'XML', '#e37933'],
+    [['yml', 'yaml'], 'YML', '#cb7171'],
+    [['md', 'markdown'], 'MD', '#6bb3e8'],
+    [['sql'], 'SQL', '#e8a33d'],
+    [['sh', 'bash', 'zsh'], 'SH', '#89e051'],
+    [['ps1', 'psm1'], 'PS', '#5391fe'],
+    [['bat', 'cmd'], 'BAT', '#89e051'],
+    [['py'], 'PY', '#519aba'],
+    [['java'], 'JAV', '#c1873d'],
+    [['go'], 'GO', '#50b7d4'],
+    [['rs'], 'RS', '#d9a066'],
+    [['rb'], 'RB', '#c46a68'],
+    [['php'], 'PHP', '#7e82b8'],
+    [['c', 'h'], 'C', '#6bb3e8'],
+    [['cpp', 'cc', 'hpp', 'cxx'], 'C++', '#6bb3e8'],
+    [['vue'], 'VUE', '#41b883'],
+    [['swift'], 'SWT', '#e37933'],
+    [['kt', 'kts'], 'KT', '#a074c4'],
+    [['dart'], 'DRT', '#50b7d4'],
+    [['txt', 'log'], 'TXT', '#9aa0a6'],
+    [['csv'], 'CSV', '#89e051'],
+    [['toml', 'ini', 'env', 'editorconfig'], 'CFG', '#9aa0a6'],
+    [['lock'], 'LCK', '#9aa0a6'],
+  ];
+
+  const ICON_TYPES = [
+    [['png', 'jpg', 'jpeg', 'gif', 'bmp', 'ico', 'webp', 'svg'], 'file-media'],
+    [['zip', 'gz', 'tar', '7z', 'rar', 'nupkg', 'vsix'], 'file-zip'],
+    [['pdf'], 'file-pdf'],
+    [['dll', 'exe', 'pdb', 'so', 'dylib'], 'file-binary'],
+  ];
+
+  const FILE_TYPE_MAP = (function () {
+    const map = new Map();
+    for (const entry of FILE_TYPES) {
+      for (const ext of entry[0]) {
+        map.set(ext, { label: entry[1], color: entry[2] });
+      }
+    }
+    return map;
+  })();
+
+  const ICON_TYPE_MAP = (function () {
+    const map = new Map();
+    for (const entry of ICON_TYPES) {
+      for (const ext of entry[0]) {
+        map.set(ext, entry[1]);
+      }
+    }
+    return map;
+  })();
+
+  function extensionOf(name) {
+    const lower = name.toLowerCase();
+    // Dotfiles such as .gitignore have no extension; their whole name is one.
+    if (lower.indexOf('.') <= 0) {
+      return lower.replace(/^\./, '');
+    }
+    return lower.slice(lower.lastIndexOf('.') + 1);
+  }
+
+  function fileTypeNode(name) {
+    const lower = name.toLowerCase();
+    if (lower.indexOf('.git') === 0 || lower === 'gitignore' || lower === 'gitattributes') {
+      const wrap = el('span', 'icon');
+      wrap.appendChild(icon('source-control'));
+      return wrap;
+    }
+    if (lower === 'dockerfile' || lower.indexOf('dockerfile') === 0) {
+      const wrap = el('span', 'icon');
+      wrap.appendChild(icon('server-environment'));
+      return wrap;
+    }
+
+    const ext = extensionOf(name);
+    const codicon = ICON_TYPE_MAP.get(ext);
+    if (codicon) {
+      const wrap = el('span', 'icon');
+      wrap.appendChild(icon(codicon));
+      return wrap;
+    }
+
+    const type = FILE_TYPE_MAP.get(ext);
+    if (!type) {
+      const wrap = el('span', 'icon');
+      wrap.appendChild(icon('file'));
+      return wrap;
+    }
+
+    const badge = el('span', 'file-badge', type.label);
+    badge.style.color = type.color;
+    badge.title = ext.toUpperCase();
+    return badge;
   }
 
   // Visual Studio shows a file icon on the left and a single status letter
@@ -516,7 +656,11 @@
 
   function fileRow(node, depth) {
     const change = node.change;
-    const fileNode = row('file', depth, null, node.label, 'file', null);
+    const mapped = STATUS_LETTERS[change.status] || STATUS_LETTERS.modified;
+    const fileNode = row('file', depth, null, node.label, null, null);
+    fileNode.insertBefore(fileTypeNode(node.label), fileNode.querySelector('.label'));
+    // Colour the name by git status as well; the type badge owns the icon slot.
+    fileNode.querySelector('.label').classList.add(mapped[1]);
     fileNode.dataset.menu = '1';
     fileNode.title =
       change.path + (change.origPath ? '  (was ' + change.origPath + ')' : '');
@@ -553,7 +697,6 @@
     );
     fileNode.appendChild(actions);
 
-    const mapped = STATUS_LETTERS[change.status] || STATUS_LETTERS.modified;
     const letter = el('span', 'status-letter ' + mapped[1], mapped[0]);
     letter.title = mapped[2];
     fileNode.appendChild(letter);
