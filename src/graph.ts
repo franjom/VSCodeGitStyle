@@ -139,6 +139,39 @@ export function labelForProvider(provider: ReviewProvider): string {
   return provider === 'gitlab' ? 'Merge Requests' : 'Pull Requests';
 }
 
+/**
+ * Second-chance detection for self-hosted instances, whose hostname gives
+ * nothing away. A committed CI definition does: only GitLab reads
+ * .gitlab-ci.yml, only GitHub reads .github/workflows.
+ */
+async function providerFromMarkers(git: Git, root: string): Promise<ReviewProvider> {
+  try {
+    const out = await git.exec(root, [
+      'ls-tree',
+      'HEAD',
+      '--name-only',
+      '--',
+      '.gitlab-ci.yml',
+      '.gitlab',
+      '.github',
+      'azure-pipelines.yml',
+    ]);
+    const names = out.split('\n').map((l) => l.trim());
+    if (names.some((n) => n === '.gitlab-ci.yml' || n === '.gitlab')) {
+      return 'gitlab';
+    }
+    if (names.includes('.github')) {
+      return 'github';
+    }
+    if (names.includes('azure-pipelines.yml')) {
+      return 'azure';
+    }
+  } catch {
+    /* no HEAD yet, or not a repo - fall through */
+  }
+  return 'unknown';
+}
+
 export async function readReviewInfo(
   git: Git,
   root: string,
@@ -150,7 +183,17 @@ export async function readReviewInfo(
   } catch {
     host = undefined;
   }
-  const provider = configured === 'auto' ? providerFromHost(host) : configured;
+
+  if (configured !== 'auto') {
+    return { provider: configured, host, label: labelForProvider(configured) };
+  }
+
+  // The host is the stronger signal when it is recognisable - a repository
+  // mirrored to GitHub may still carry a .gitlab-ci.yml.
+  let provider = providerFromHost(host);
+  if (provider === 'unknown') {
+    provider = await providerFromMarkers(git, root);
+  }
   return { provider, host, label: labelForProvider(provider) };
 }
 
@@ -352,6 +395,7 @@ export function layout(
     const below: DotLine[] = [];
     commit.parents.forEach((parent, index) => {
       let target = lanes.indexOf(parent);
+
       if (target === -1) {
         if (index === 0 && lanes[lane] === null) {
           // The first parent continues straight down in the commit's own lane.
@@ -362,7 +406,17 @@ export function layout(
           colors[target] = nextColor++;
         }
         lanes[target] = parent;
+      } else if (index === 0 && target > lane && lanes[lane] === null) {
+        // The first parent is already awaited further right, because another
+        // branch reached it first. Pull it back into this commit's own lane so
+        // the main line hugs the left edge the way `git log --graph` and Visual
+        // Studio both draw it; the vacated lane becomes a converging line.
+        lanes[target] = null;
+        target = lane;
+        lanes[target] = parent;
+        colors[target] = dotColor;
       }
+
       below.push({ lane: target, color: colors[target] ?? dotColor });
     });
 

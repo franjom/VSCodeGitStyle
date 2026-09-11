@@ -93,7 +93,8 @@ so VS Code's credential plumbing stays in play.
   in both [media/main.js](media/main.js) and [media/repo.js](media/repo.js) is an
   empty hook. Every row already carries `role`, `aria-level` and `aria-expanded`,
   so a future pass only needs a roving tabindex plus arrow/Home/End handling.
-- **Pull Requests** — needs GitHub / Azure DevOps authentication.
+- **Pull / merge requests** — the node is a label only; populating it needs the
+  provider's API and a token (GitHub, GitLab, Azure DevOps).
 - **Row virtualization** — every loaded commit is a live DOM row (about 14 DOM
   nodes and 2.4 SVG paths each). Measured row-build cost, with real commit rows
   multiplied synthetically:
@@ -118,21 +119,37 @@ so VS Code's credential plumbing stays in play.
 - `vsGitStyle.graphPageSize` (default `200`) — commits loaded per page in the graph.
 - `vsGitStyle.reviewProvider` (default `auto`) — `github`, `gitlab`, `azure` or
   `none`. Controls whether the review node reads "Pull Requests" or GitLab's
-  "Merge Requests". Detection reads the `origin` URL's host, which cannot
-  identify a self-hosted instance — `git.example.com` says nothing about what
-  runs on it — so set this explicitly for a private GitLab or Gitea.
+  "Merge Requests". On `auto` the `origin` URL's host is checked first, and
+  because a self-hosted host gives nothing away (`git.example.com` says nothing
+  about what runs on it) a committed CI definition is used as a second signal:
+  `.gitlab-ci.yml` or `.gitlab/` means GitLab, `.github/` means GitHub,
+  `azure-pipelines.yml` means Azure DevOps. Set the value explicitly if both
+  signals miss.
 
 ## Measured against
 
-- `D:\DungeonKeeperRemake` — 432 commits, 3 branches, 3 graph lanes. Lane layout
-  compared row for row against `git log --graph`; 431 parent edges checked for
-  lane continuity, none broken. `readRefs` 33 ms, `readGraph` over all 432
-  commits 122 ms, `git status` snapshot 88 ms, tree build 0.2 ms.
-- A scratch repository built with every change type (modify, add, delete,
-  rename with a space in the path, untracked, staged), three stashes, a tag,
-  an `origin` remote with 7 outgoing / 2 incoming commits, and three merge
-  commits producing a 3-lane graph.
+Lane layout is checked two ways: the computed rows are rendered as ASCII and
+compared against `git log --graph` for the same revisions, and every parent edge
+is then walked down the graph row by row to confirm the line is drawn on each
+intervening row and lands on the parent's dot. Across the four repositories
+below that is **1,215 parent edges with no gaps, no wrong endings and no lane
+collisions**.
 
-Not yet exercised: a history with many concurrent lanes (more than 3), dozens of
-branches in the pickers, multiple repositories in one workspace, or a remote
-requiring interactive credentials.
+| repository | commits | lanes | refs | notes |
+| --- | --- | --- | --- | --- |
+| `MedicusClientv2` | 459 | 4 | 33 | 45 merges, 23 tags, 7 remote branches, self-hosted GitLab |
+| `DungeonKeeperRemake` | 432 | 3 | 3 | no remote |
+| `DungeonKeeperRemake-Codex` | 410 | 3 | 3 | worktree of the above |
+| scratch repo | 10 | 3 | 11 | see below |
+
+Read timings on `MedicusClientv2`: `readRefs` 46 ms, `readGraph` over all 459
+commits 143 ms, `git status` snapshot 148 ms, tree build 0.2 ms.
+
+The scratch repository was built to cover what the real ones do not: every
+change type (modify, add, delete, rename with a space in the path, untracked,
+staged), three stashes, a tag, and an `origin` remote with 7 outgoing and 2
+incoming commits.
+
+Not yet exercised: a history needing more than 4 concurrent lanes, multiple
+repositories in one workspace, and any remote operation that prompts for
+credentials — fetch/pull/push have only been run against a local bare remote.
