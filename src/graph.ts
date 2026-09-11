@@ -83,6 +83,128 @@ const LOG_FORMAT = [
   '%s',
 ].join(UNIT) + RECORD;
 
+export interface CommitFile {
+  /** Raw git status letter: A, M, D, T, R or C. */
+  status: string;
+  path: string;
+  origPath?: string;
+}
+
+export interface CommitPerson {
+  name: string;
+  email: string;
+  date: string;
+}
+
+export interface CommitDetails {
+  hash: string;
+  shortHash: string;
+  parents: string[];
+  refs: string[];
+  author: CommitPerson;
+  committer: CommitPerson;
+  subject: string;
+  body: string;
+  files: CommitFile[];
+  /** True when the file list was capped. */
+  truncated: boolean;
+  /** A merge's file list is its diff against the first parent. */
+  isMerge: boolean;
+}
+
+const MAX_DETAIL_FILES = 500;
+
+const DETAIL_FORMAT = [
+  '%H',
+  '%P',
+  '%an',
+  '%ae',
+  '%aI',
+  '%cn',
+  '%ce',
+  '%cI',
+  '%D',
+  '%s',
+  '%b',
+].join(UNIT);
+
+export async function readCommitDetails(
+  git: Git,
+  root: string,
+  hash: string
+): Promise<CommitDetails> {
+  const [headerOut, filesOut] = await Promise.all([
+    git.exec(root, ['show', '-s', `--format=${DETAIL_FORMAT}`, hash]),
+    // --first-parent gives a merge a meaningful file list (git would otherwise
+    // print nothing), and --root lets the initial commit show its own files.
+    git.exec(root, [
+      'show',
+      '--format=',
+      '--name-status',
+      '-z',
+      '-M',
+      '--first-parent',
+      '--root',
+      hash,
+    ]),
+  ]);
+
+  const parts = headerOut.split(UNIT);
+  const parents = (parts[1] ?? '').split(' ').filter(Boolean);
+  const files = parseNameStatus(filesOut);
+
+  return {
+    hash: parts[0] ?? hash,
+    shortHash: (parts[0] ?? hash).slice(0, 7),
+    parents,
+    refs: (parts[8] ?? '')
+      .split(', ')
+      .map((r) => r.trim())
+      .filter(Boolean),
+    author: { name: parts[2] ?? '', email: parts[3] ?? '', date: parts[4] ?? '' },
+    committer: { name: parts[5] ?? '', email: parts[6] ?? '', date: parts[7] ?? '' },
+    subject: parts[9] ?? '',
+    body: (parts[10] ?? '').replace(/\s+$/, ''),
+    files: files.slice(0, MAX_DETAIL_FILES),
+    truncated: files.length > MAX_DETAIL_FILES,
+    isMerge: parents.length > 1,
+  };
+}
+
+/**
+ * Parses `--name-status -z`: a status token followed by one path, or by an old
+ * and a new path when the status is a rename or copy.
+ */
+export function parseNameStatus(out: string): CommitFile[] {
+  const tokens = out.split('\0');
+  const files: CommitFile[] = [];
+
+  for (let i = 0; i < tokens.length; i++) {
+    const status = tokens[i]?.replace(/^\n+/, '').trim();
+    if (!status) {
+      continue;
+    }
+    const letter = status[0];
+    if (letter === 'R' || letter === 'C') {
+      const origPath = tokens[++i];
+      const path = tokens[++i];
+      if (path === undefined) {
+        break;
+      }
+      files.push({ status: letter, path, origPath });
+    } else {
+      const path = tokens[++i];
+      if (path === undefined) {
+        break;
+      }
+      files.push({ status: letter, path });
+    }
+  }
+
+  files.sort((a, b) => a.path.localeCompare(b.path, undefined, { sensitivity: 'base' }));
+  return files;
+}
+
 export type ReviewProvider = 'github' | 'gitlab' | 'azure' | 'unknown';
 
 export interface ReviewInfo {

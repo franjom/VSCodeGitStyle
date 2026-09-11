@@ -2,7 +2,13 @@ import * as vscode from 'vscode';
 import { ChangesViewProvider } from './changesView';
 import { Git } from './git';
 import { activateGitApi } from './gitExtension';
-import { CommitContentProvider, COMMIT_SCHEME, RepositoryWindow } from './repositoryWindow';
+import {
+  BlobContentProvider,
+  BLOB_SCHEME,
+  CommitContentProvider,
+  COMMIT_SCHEME,
+  RepositoryWindow,
+} from './repositoryWindow';
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const api = await activateGitApi();
@@ -24,6 +30,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.workspace.registerTextDocumentContentProvider(
       COMMIT_SCHEME,
       new CommitContentProvider(git)
+    ),
+    vscode.workspace.registerTextDocumentContentProvider(
+      BLOB_SCHEME,
+      new BlobContentProvider(git)
     ),
     vscode.commands.registerCommand('vsGitStyle.refresh', () => provider.scheduleRefresh(0)),
     vscode.commands.registerCommand('vsGitStyle.openRepositoryWindow', () =>

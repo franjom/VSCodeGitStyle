@@ -62,6 +62,38 @@
             new MessageEvent('message', { data: { type: 'model', model: window.__VSG_REPO_MODEL } })
           );
         }
+        if (message.type === 'selectCommit') {
+          // Synthesize details from the captured row so the pane is usable in
+          // the preview; the real thing reads them from git.
+          var rows = window.__VSG_REPO_MODEL.graph.rows;
+          var row = null;
+          for (var i = 0; i < rows.length; i++) {
+            if (rows[i].commit.hash === message.hash) { row = rows[i]; break; }
+          }
+          var c = row && row.commit;
+          var slug = c ? c.author.toLowerCase().replace(/[^a-z]+/g, '.') : 'someone';
+          window.dispatchEvent(new MessageEvent('message', { data: {
+            type: 'commitDetails',
+            details: c ? {
+              hash: c.hash,
+              shortHash: c.shortHash,
+              parents: c.parents,
+              refs: c.refs,
+              author: { name: c.author, email: slug + '@example.com', date: c.date },
+              committer: { name: c.author, email: slug + '@example.com', date: c.date },
+              subject: c.subject,
+              body: 'Preview harness: this body and file list are synthesized.',
+              files: [
+                { status: 'M', path: 'Mcs.Skzz.Api/Controllers/Api/WidgetSettings/WidgetSettingsController.cs' },
+                { status: 'A', path: 'Mcs.Skzz.Data/Repositories/WidgetSettingRepository.cs' },
+                { status: 'D', path: 'Mcs.Skzz.Common/Helpers/DateHelper.cs' },
+                { status: 'R', path: 'Mcs.Medicus.Spa/src/styles/theme.scss', origPath: 'Mcs.Medicus.Spa/src/theme.scss' }
+              ],
+              truncated: false,
+              isMerge: c.parents.length > 1
+            } : null
+          } }));
+        }
       },
     };
   };

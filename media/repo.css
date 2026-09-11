@@ -7,6 +7,7 @@
   --vsg-row-height: 22px;
   --vsg-lane-width: 14px;
   --vsg-left-width: 260px;
+  --vsg-details-width: 340px;
   --vsg-col-ref: 186px;
   --vsg-col-graph: 60px;
   --vsg-col-author: 110px;
@@ -535,4 +536,190 @@ body {
   height: 1px;
   margin: 4px 0;
   background: var(--vscode-menu-separatorBackground, var(--vsg-border));
+}
+
+/* --------------------------------------------------------- details pane */
+
+.details {
+  flex: 0 0 var(--vsg-details-width);
+  min-width: 220px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  border-left: 1px solid var(--vsg-border);
+}
+
+.details .head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 4px 0 10px;
+  border-bottom: 1px solid var(--vsg-border);
+}
+
+.details .head .title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.details .head .hash {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 12px;
+  color: var(--vsg-muted);
+  flex: 0 0 auto;
+}
+
+.details .head .spacer {
+  flex: 1 1 auto;
+}
+
+.details .scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 9px 10px 16px;
+}
+
+.details .subject {
+  font-weight: 600;
+  line-height: 1.35;
+  user-select: text;
+}
+
+.details .message-body {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 12px;
+  color: var(--vsg-muted);
+  user-select: text;
+}
+
+.details .meta {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 3px 10px;
+  margin-top: 12px;
+  font-size: 12px;
+}
+
+.details .meta .k {
+  color: var(--vsg-muted);
+  white-space: nowrap;
+}
+
+.details .meta .v {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: text;
+}
+
+.details .parents {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.details .parent {
+  font-family: var(--vscode-editor-font-family, monospace);
+  color: var(--vscode-textLink-foreground, #4daafc);
+  cursor: pointer;
+}
+
+.details .parent:hover {
+  text-decoration: underline;
+}
+
+.details .files-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 14px 0 4px;
+  font-weight: 600;
+}
+
+.details .files-head .note {
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--vsg-muted);
+}
+
+.details .file {
+  display: flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 4px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.details .file:hover {
+  background: var(--vsg-hover);
+}
+
+.details .file .st {
+  flex: 0 0 16px;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.details .file .name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 0 1 auto;
+}
+
+.details .file .dir {
+  margin-left: 7px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--vsg-muted);
+}
+
+.details .actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+  font-size: 12px;
+}
+
+.details .placeholder {
+  padding: 16px 12px;
+  color: var(--vsg-muted);
+  font-style: italic;
+}
+
+.st-A {
+  color: var(--vscode-gitDecoration-addedResourceForeground, #81b88b);
+}
+
+.st-M {
+  color: var(--vscode-gitDecoration-modifiedResourceForeground, #e2c08d);
+}
+
+.st-D {
+  color: var(--vscode-gitDecoration-deletedResourceForeground, #c74e39);
+}
+
+.st-R,
+.st-C {
+  color: var(--vscode-gitDecoration-renamedResourceForeground, #73c991);
+}
+
+.st-T {
+  color: var(--vsg-lane-2);
 }

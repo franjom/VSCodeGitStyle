@@ -22,6 +22,11 @@
     treeClosed: new Set(persisted.treeClosed || ['tags', 'pullRequests']),
     selected: null,
     leftWidth: persisted.leftWidth || 260,
+    detailsWidth: persisted.detailsWidth || 340,
+    detailsVisible: persisted.detailsVisible !== false,
+    details: null,
+    detailsError: null,
+    detailsLoading: false,
   };
 
   function save() {
@@ -29,6 +34,8 @@
       collapsed: state.collapsed,
       treeClosed: [...state.treeClosed],
       leftWidth: state.leftWidth,
+      detailsWidth: state.detailsWidth,
+      detailsVisible: state.detailsVisible,
     });
   }
 
@@ -230,8 +237,14 @@
     const left = renderLeft();
     left.style.flexBasis = state.leftWidth + 'px';
     body.appendChild(left);
-    body.appendChild(renderSplitter(left));
+    body.appendChild(renderSplitter(left, 'left'));
     body.appendChild(renderRight());
+    if (state.detailsVisible) {
+      const details = renderDetails();
+      details.style.flexBasis = state.detailsWidth + 'px';
+      body.appendChild(renderSplitter(details, 'right'));
+      body.appendChild(details);
+    }
     root.appendChild(body);
 
     const newScroller = root.querySelector('.rows');
@@ -251,6 +264,19 @@
     bar.appendChild(iconButton('arrow-up', 'Push', function () { post({ type: 'remote', op: 'push' }); }));
     bar.appendChild(iconButton('sync', 'Sync', function () { post({ type: 'remote', op: 'sync' }); }));
     bar.appendChild(el('div', 'spacer'));
+
+    bar.appendChild(
+      iconButton(
+        'layout-sidebar-right',
+        state.detailsVisible ? 'Hide commit details' : 'Show commit details',
+        function () {
+          state.detailsVisible = !state.detailsVisible;
+          save();
+          render();
+        }
+      )
+    );
+    bar.appendChild(el('div', 'sep'));
 
     const filter = el('input', 'filter-input');
     filter.type = 'text';
@@ -275,18 +301,25 @@
     return bar;
   }
 
-  function renderSplitter(leftPane) {
+  function renderSplitter(pane, side) {
     const splitter = el('div', 'splitter');
     splitter.addEventListener('mousedown', function (event) {
       event.preventDefault();
       splitter.classList.add('dragging');
       const startX = event.clientX;
-      const startWidth = leftPane.getBoundingClientRect().width;
+      const startWidth = pane.getBoundingClientRect().width;
 
       function move(e) {
-        const next = Math.max(140, Math.min(600, startWidth + (e.clientX - startX)));
-        state.leftWidth = next;
-        leftPane.style.flexBasis = next + 'px';
+        // Dragging the right-hand splitter left must widen its pane, so the
+        // delta is inverted for that side.
+        const delta = side === 'right' ? startX - e.clientX : e.clientX - startX;
+        const next = Math.max(200, Math.min(720, startWidth + delta));
+        if (side === 'right') {
+          state.detailsWidth = next;
+        } else {
+          state.leftWidth = next;
+        }
+        pane.style.flexBasis = next + 'px';
       }
       function up() {
         splitter.classList.remove('dragging');
@@ -782,15 +815,13 @@
     node.appendChild(el('div', 'cell id', commit.shortHash));
 
     node.addEventListener('click', function () {
-      state.selected = commit.hash;
-      renderRowsOnly();
+      selectCommit(commit.hash);
     });
     node.addEventListener('dblclick', function () {
       post({ type: 'showCommit', hash: commit.hash });
     });
     node.addEventListener('contextmenu', function (event) {
-      state.selected = commit.hash;
-      renderRowsOnly();
+      selectCommit(commit.hash);
       showMenu(event, [
         { label: 'View Commit Details', run: function () { post({ type: 'showCommit', hash: commit.hash }); } },
         { label: 'Copy Commit ID', run: function () { post({ type: 'copyId', hash: commit.hash }); } },
@@ -800,6 +831,174 @@
     });
 
     return node;
+  }
+
+  // ------------------------------------------------------------ details pane
+
+  function selectCommit(hash) {
+    state.selected = hash;
+    state.details = null;
+    state.detailsError = null;
+    state.detailsLoading = true;
+    post({ type: 'selectCommit', hash: hash });
+    renderRowsOnly();
+    renderDetailsOnly();
+  }
+
+  function renderDetailsOnly() {
+    if (!state.detailsVisible) {
+      return;
+    }
+    const existing = root.querySelector('.details');
+    if (!existing) {
+      render();
+      return;
+    }
+    const next = renderDetails();
+    next.style.flexBasis = state.detailsWidth + 'px';
+    existing.replaceWith(next);
+  }
+
+  function renderDetails() {
+    const pane = el('div', 'details');
+    const details = state.details;
+
+    const head = el('div', 'head');
+    head.appendChild(el('span', 'title', 'Commit details'));
+    head.appendChild(el('div', 'spacer'));
+    if (details) {
+      head.appendChild(el('span', 'hash', details.shortHash));
+    }
+    head.appendChild(
+      iconButton('close', 'Hide commit details', function () {
+        state.detailsVisible = false;
+        save();
+        render();
+      })
+    );
+    pane.appendChild(head);
+
+    const scroll = el('div', 'scroll');
+    if (state.detailsError) {
+      scroll.appendChild(el('div', 'placeholder', state.detailsError));
+    } else if (details) {
+      fillDetails(scroll, details);
+    } else if (state.detailsLoading) {
+      scroll.appendChild(el('div', 'placeholder', 'Loading…'));
+    } else {
+      scroll.appendChild(el('div', 'placeholder', 'Select a commit to see its details.'));
+    }
+    pane.appendChild(scroll);
+    return pane;
+  }
+
+  function fillDetails(container, d) {
+    container.appendChild(el('div', 'subject', d.subject));
+    if (d.body) {
+      container.appendChild(el('div', 'message-body', d.body));
+    }
+
+    const meta = el('div', 'meta');
+    function addMeta(key, value) {
+      meta.appendChild(el('span', 'k', key));
+      const cell = el('span', 'v');
+      if (typeof value === 'string') {
+        cell.textContent = value;
+        cell.title = value;
+      } else {
+        cell.appendChild(value);
+      }
+      meta.appendChild(cell);
+    }
+
+    addMeta('Author', d.author.name + ' <' + d.author.email + '>');
+    addMeta('Date', formatDate(d.author.date));
+    // Only worth the rows when the commit was not authored and committed in
+    // one go - a rebase, a cherry-pick, or a patch applied by someone else.
+    if (d.committer.name !== d.author.name || d.committer.date !== d.author.date) {
+      addMeta('Committer', d.committer.name + ' <' + d.committer.email + '>');
+      addMeta('Committed', formatDate(d.committer.date));
+    }
+    addMeta('Commit', d.hash);
+
+    if (d.parents.length) {
+      const wrap = el('div', 'parents');
+      for (const parent of d.parents) {
+        const node = el('span', 'parent', parent.slice(0, 7));
+        node.title = parent;
+        node.addEventListener('click', function () {
+          selectCommit(parent);
+        });
+        wrap.appendChild(node);
+      }
+      addMeta(d.parents.length > 1 ? 'Parents' : 'Parent', wrap);
+    }
+
+    if (d.refs.length) {
+      addMeta('Refs', d.refs.join(', '));
+    }
+    container.appendChild(meta);
+
+    const filesHead = el('div', 'files-head');
+    filesHead.appendChild(el('span', null, 'Changes (' + d.files.length + ')'));
+    if (d.isMerge) {
+      filesHead.appendChild(el('span', 'note', 'against the first parent'));
+    }
+    if (d.truncated) {
+      filesHead.appendChild(el('span', 'note', 'list truncated'));
+    }
+    container.appendChild(filesHead);
+
+    if (!d.files.length) {
+      container.appendChild(el('div', 'placeholder', 'No file changes.'));
+    } else {
+      for (const file of d.files) {
+        container.appendChild(detailsFileRow(d, file));
+      }
+    }
+
+    const actions = el('div', 'actions');
+    actions.appendChild(
+      link('View full patch', function () {
+        post({ type: 'showCommit', hash: d.hash });
+      })
+    );
+    actions.appendChild(
+      link('Copy ID', function () {
+        post({ type: 'copyId', hash: d.hash });
+      })
+    );
+    actions.appendChild(
+      link('New branch here…', function () {
+        post({ type: 'branchFrom', hash: d.hash });
+      })
+    );
+    container.appendChild(actions);
+  }
+
+  function detailsFileRow(d, file) {
+    const row = el('div', 'file');
+    const segments = file.path.split('/');
+    const name = segments.pop();
+
+    row.appendChild(el('span', 'st st-' + file.status, file.status));
+    row.appendChild(el('span', 'name', name));
+    if (segments.length) {
+      row.appendChild(el('span', 'dir', segments.join('/')));
+    }
+    row.title = file.origPath
+      ? file.path + String.fromCharCode(10) + '(was ' + file.origPath + ')'
+      : file.path;
+    row.addEventListener('click', function () {
+      post({
+        type: 'openFileDiff',
+        hash: d.hash,
+        path: file.path,
+        origPath: file.origPath,
+        status: file.status,
+      });
+    });
+    return row;
   }
 
   // ------------------------------------------------------------------------
@@ -823,6 +1022,12 @@
       case 'model':
         state.model = message.model;
         render();
+        break;
+      case 'commitDetails':
+        state.detailsLoading = false;
+        state.details = message.details || null;
+        state.detailsError = message.error || null;
+        renderDetailsOnly();
         break;
       case 'busy':
         state.busy = message.busy;

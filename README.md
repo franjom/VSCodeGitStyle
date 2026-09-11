@@ -61,12 +61,15 @@ A `WebviewPanel` in the editor area.
 | Commit graph with coloured lanes and merge curves | done, SVG, lanes computed in [src/graph.ts](src/graph.ts) |
 | Branch / Tag chips per commit | done, ranked so the current branch and tags survive the cap |
 | Message / Author / Date / ID columns | done |
-| Click to select, double-click for commit details | done, details open as a read-only diff document |
+| Click to select | done, fills the commit details pane |
+| Commit details pane | done: message, author/committer, full SHA, clickable parents, refs, and the changed-file list |
+| Click a file in the pane | done, opens a real diff of that file at that commit via the `vsgitstyle-blob:` scheme |
+| Double-click a commit | done, opens the whole commit as a read-only patch |
 | Context menu: details, copy ID, new branch here | done |
 | Paging | `Load more commits`, page size from `vsGitStyle.graphPageSize` (default 200); incoming commits get their own budget so a large fetch does not truncate Local History |
 | Stays current | reloads when the repository changes anywhere - the sidebar, a terminal, another editor - not only on its own actions |
 | Resizable columns | not done; the grid template is fixed except for the graph column |
-| Commit details side pane | not done; details open as an editor document instead |
+| Resizable details pane, hideable | done, draggable splitter plus a toolbar toggle; width and visibility persist |
 
 ### How the graph is computed
 

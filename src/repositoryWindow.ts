@@ -4,6 +4,7 @@ import { Git } from './git';
 import { GitApi } from './gitExtension';
 import {
   GraphModel,
+  readCommitDetails,
   readGraph,
   readRefs,
   readReviewInfo,
@@ -13,6 +14,7 @@ import {
 } from './graph';
 
 export const COMMIT_SCHEME = 'vsgitstyle-commit';
+export const BLOB_SCHEME = 'vsgitstyle-blob';
 
 const DEFAULT_PAGE_SIZE = 200;
 
@@ -39,7 +41,15 @@ type Inbound =
   | { type: 'checkout'; ref: string }
   | { type: 'copyId'; hash: string }
   | { type: 'showCommit'; hash: string }
-  | { type: 'branchFrom'; hash: string };
+  | { type: 'branchFrom'; hash: string }
+  | { type: 'selectCommit'; hash: string }
+  | {
+      type: 'openFileDiff';
+      hash: string;
+      path: string;
+      origPath?: string;
+      status: string;
+    };
 
 /**
  * The Git Repository window: Visual Studio's full-screen commit graph, as a
@@ -186,6 +196,14 @@ export class RepositoryWindow {
         case 'branchFrom':
           await this.branchFrom(message.hash);
           return;
+
+        case 'selectCommit':
+          await this.sendDetails(message.hash);
+          return;
+
+        case 'openFileDiff':
+          await this.openFileDiff(message);
+          return;
       }
     } catch (err) {
       void vscode.window.showErrorMessage(
@@ -220,6 +238,47 @@ export class RepositoryWindow {
 
   private post(message: unknown): void {
     void this.panel.webview.postMessage(message);
+  }
+
+  private async sendDetails(hash: string): Promise<void> {
+    try {
+      const details = await readCommitDetails(this.git, this.root, hash);
+      this.post({ type: 'commitDetails', details });
+    } catch (err) {
+      this.post({
+        type: 'commitDetails',
+        details: null,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  private blobUri(rev: string, filePath: string): vscode.Uri {
+    // The published path keeps the file name so the editor picks a language,
+    // and the revision prefix keeps the two sides of a diff distinct.
+    return vscode.Uri.from({
+      scheme: BLOB_SCHEME,
+      path: `/${rev.replace(/[^\w.-]/g, '_')}/${filePath}`,
+      query: new URLSearchParams({ root: this.root, rev, path: filePath }).toString(),
+    });
+  }
+
+  private async openFileDiff(
+    message: Extract<Inbound, { type: 'openFileDiff' }>
+  ): Promise<void> {
+    const previous = message.origPath ?? message.path;
+    const left = this.blobUri(`${message.hash}^`, previous);
+    const right = this.blobUri(message.hash, message.path);
+    const name = message.path.split('/').pop() ?? message.path;
+    const short = message.hash.slice(0, 7);
+    const title =
+      message.origPath && message.origPath !== message.path
+        ? `${name} (${short}) ← ${message.origPath.split('/').pop()}`
+        : `${name} (${short})`;
+    // A missing side - an added file, a deleted file, or the root commit's
+    // absent parent - comes back empty from the blob provider, which reads as
+    // an all-added or all-removed diff.
+    await vscode.commands.executeCommand('vscode.diff', left, right, title);
   }
 
   private async showCommit(hash: string): Promise<void> {
@@ -276,6 +335,31 @@ export class RepositoryWindow {
 <script nonce="${nonce}" src="${asset('repo.js')}"></script>
 </body>
 </html>`;
+  }
+}
+
+/**
+ * Backs the `vsgitstyle-blob:` scheme, so one file at one revision can be shown
+ * as a read-only document and fed to `vscode.diff`.
+ */
+export class BlobContentProvider implements vscode.TextDocumentContentProvider {
+  constructor(private readonly git: Git) {}
+
+  async provideTextDocumentContent(uri: vscode.Uri): Promise<string> {
+    const params = new URLSearchParams(uri.query);
+    const root = params.get('root');
+    const rev = params.get('rev');
+    const filePath = params.get('path');
+    if (!root || !rev || !filePath) {
+      return '';
+    }
+    try {
+      return await this.git.exec(root, ['show', `${rev}:${filePath}`]);
+    } catch {
+      // The path does not exist at that revision, or the revision does not
+      // exist at all (the root commit's parent). An empty side is correct.
+      return '';
+    }
   }
 }
 
