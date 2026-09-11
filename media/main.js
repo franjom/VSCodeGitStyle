@@ -11,9 +11,7 @@
   /** @type {{model: any, expanded: Set<string>, sections: Record<string, boolean>, message: string, amend: boolean, selected: string|null, busy: boolean, generating: boolean, error: string|null}} */
   const state = {
     model: null,
-    expanded: new Set(
-      persisted.expanded || ['unstaged:#repo', 'staged:#repo', 'conflicts:#repo']
-    ),
+    collapsedNodes: new Set(persisted.collapsedNodes || []),
     sections: Object.assign(
       { changes: true, staged: true, conflicts: true, stashes: true },
       persisted.sections
@@ -28,7 +26,7 @@
 
   function save() {
     vscode.setState({
-      expanded: [...state.expanded],
+      collapsedNodes: [...state.collapsedNodes],
       sections: state.sections,
       message: state.message,
     });
@@ -426,17 +424,29 @@
     const sectionKey = kind === 'unstaged' ? 'changes' : kind;
     const prefix = kind + ':';
 
+    // One button that does whichever of the two is useful right now: folders
+    // start expanded, so a collapse-all with no way back would be a trap.
+    const folderKeys = collectFolderKeys(nodes, prefix, [prefix + '#repo']);
+    const anyCollapsed = folderKeys.some(function (key) {
+      return state.collapsedNodes.has(key);
+    });
+
     const actions = [
-      iconButton('collapse-all', 'Collapse all folders', function () {
-        for (const key of [...state.expanded]) {
-          if (key.indexOf(prefix) === 0) {
-            state.expanded.delete(key);
+      iconButton(
+        anyCollapsed ? 'expand-all' : 'collapse-all',
+        anyCollapsed ? 'Expand all folders' : 'Collapse all folders',
+        function () {
+          for (const key of folderKeys) {
+            if (anyCollapsed) {
+              state.collapsedNodes.delete(key);
+            } else {
+              state.collapsedNodes.add(key);
+            }
           }
+          save();
+          render();
         }
-        state.expanded.add(prefix + '#repo');
-        save();
-        render();
-      }),
+      ),
     ];
 
     if (isConflicts) {
@@ -509,7 +519,7 @@
 
     // The repository root row, matching Visual Studio's full repository path.
     const repoKey = prefix + '#repo';
-    const repoOpen = state.expanded.has(repoKey);
+    const repoOpen = isNodeOpen(repoKey);
     const repoRow = row('repo', 0, repoOpen, active.displayRoot, 'repo', null);
     repoRow.addEventListener('click', function () {
       toggle(repoKey, repoOpen);
@@ -530,7 +540,7 @@
     for (const node of nodes) {
       if (node.kind === 'folder') {
         const key = prefix + node.key;
-        const open = state.expanded.has(key);
+        const open = isNodeOpen(key);
         const folderRow = row(
           'folder',
           depth,
@@ -580,14 +590,29 @@
     }
   }
 
+  function isNodeOpen(key) {
+    return !state.collapsedNodes.has(key);
+  }
+
   function toggle(key, open) {
     if (open) {
-      state.expanded.delete(key);
+      state.collapsedNodes.add(key);
     } else {
-      state.expanded.add(key);
+      state.collapsedNodes.delete(key);
     }
     save();
     render();
+  }
+
+  /** Every folder key in a section, for the collapse/expand-all button. */
+  function collectFolderKeys(nodes, prefix, out) {
+    for (const node of nodes) {
+      if (node.kind === 'folder') {
+        out.push(prefix + node.key);
+        collectFolderKeys(node.children, prefix, out);
+      }
+    }
+    return out;
   }
 
   function row(kind, depth, open, label, codicon, statusClass) {

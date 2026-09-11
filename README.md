@@ -36,7 +36,7 @@ theme tokens so it follows the active colour theme.
 | AI message generation (sparkle button) | done, via the VS Code Language Model API when a provider exists |
 | `Commit All` / `Commit Staged` split button | done; the primary action becomes `Commit Staged` as soon as anything is staged, with and Push / and Sync variants |
 | `Amend` checkbox | done |
-| `Changes (n)` tree: repo root, folders, files | done, single-child folder chains collapsed like VS |
+| `Changes (n)` tree: repo root, folders, files | done, single-child folder chains collapsed like VS; folders start expanded |
 | `Staged Changes (n)` as its own section | done; appears only when something is staged, with its own tree and expansion state |
 | `Merge Conflicts (n)` section | done; shown above the others while a merge, rebase, cherry-pick or revert is unresolved |
 | Resolve a conflict | done: open in VS Code's merge editor, take current, take incoming, or mark resolved |
