@@ -78,7 +78,13 @@
         },
         "vsGitStyle.reviewProvider": {
           "type": "string",
-          "enum": ["auto", "github", "gitlab", "azure", "none"],
+          "enum": [
+            "auto",
+            "github",
+            "gitlab",
+            "azure",
+            "none"
+          ],
           "default": "auto",
           "enumDescriptions": [
             "Guess from the origin URL. A self-hosted host cannot be recognised this way - set the provider explicitly.",
@@ -100,14 +106,14 @@
   "scripts": {
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "vscode:prepublish": "npm run compile"
+    "vscode:prepublish": "npm run compile",
+    "package": "vsce package --no-dependencies --baseContentUrl https://local.invalid/vs-git-style --baseImagesUrl https://local.invalid/vs-git-style --out vs-git-style.vsix"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
     "@types/vscode": "^1.90.0",
+    "@vscode/codicons": "^0.0.36",
+    "@vscode/vsce": "^3.2.1",
     "typescript": "^5.5.4"
-  },
-  "dependencies": {
-    "@vscode/codicons": "^0.0.36"
   }
 }
