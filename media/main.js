@@ -11,8 +11,13 @@
   /** @type {{model: any, expanded: Set<string>, sections: Record<string, boolean>, message: string, amend: boolean, selected: string|null, busy: boolean, generating: boolean, error: string|null}} */
   const state = {
     model: null,
-    expanded: new Set(persisted.expanded || ['unstaged:#repo', 'staged:#repo']),
-    sections: Object.assign({ changes: true, staged: true, stashes: true }, persisted.sections),
+    expanded: new Set(
+      persisted.expanded || ['unstaged:#repo', 'staged:#repo', 'conflicts:#repo']
+    ),
+    sections: Object.assign(
+      { changes: true, staged: true, conflicts: true, stashes: true },
+      persisted.sections
+    ),
     message: persisted.message || '',
     amend: false,
     selected: null,
@@ -65,6 +70,15 @@
       onClick(event);
     });
     return button;
+  }
+
+  function link(text, onClick) {
+    const node = el('a', 'link', text);
+    node.addEventListener('click', function (event) {
+      event.stopPropagation();
+      onClick();
+    });
+    return node;
   }
 
   // ---------------------------------------------------------- context menus
@@ -128,9 +142,16 @@
     }
 
     root.appendChild(renderHeader(active));
+    if (active.operation) {
+      root.appendChild(renderOperationBanner(active));
+    }
     root.appendChild(renderCommitArea(active));
 
     const content = el('div', 'content');
+    // Unresolved conflicts block the commit entirely, so they go first.
+    if (active.conflicts.length > 0) {
+      content.appendChild(renderFilesSection(active, 'conflicts'));
+    }
     // Visual Studio puts Staged Changes above Changes, and only shows it once
     // something is actually staged.
     if (active.staged.length > 0) {
@@ -229,6 +250,32 @@
     return header;
   }
 
+  const OPERATION_LABELS = {
+    merge: 'Merging',
+    rebase: 'Rebasing onto',
+    'cherry-pick': 'Cherry-picking',
+    revert: 'Reverting',
+  };
+
+  function renderOperationBanner(active) {
+    const op = active.operation;
+    const banner = el('div', 'op-banner' + (active.conflicts.length ? ' blocked' : ''));
+    banner.appendChild(icon(active.conflicts.length ? 'warning' : 'git-merge'));
+
+    const label = (OPERATION_LABELS[op.kind] || op.kind) + ' ' + (op.ref || '');
+    const text = active.conflicts.length
+      ? label + ' - resolve ' + active.conflicts.length + ' conflict(s) to continue'
+      : label + ' - conflicts resolved, ready to commit';
+    banner.appendChild(el('span', 'text', text.trim()));
+
+    banner.appendChild(
+      link('Abort', function () {
+        post({ type: 'abortOperation' });
+      })
+    );
+    return banner;
+  }
+
   function renderCommitArea(active) {
     const area = el('div', 'commit-area');
 
@@ -273,15 +320,19 @@
     const hasAnything = hasStaged || active.unstaged.length > 0;
     const primaryMode = hasStaged ? 'staged' : 'all';
 
+    const blocked = active.conflicts.length > 0;
     const primary = el('button', 'primary', hasStaged ? 'Commit Staged' : 'Commit All');
-    primary.disabled = state.busy || (!hasAnything && !state.amend);
+    primary.disabled = state.busy || blocked || (!hasAnything && !state.amend);
+    if (blocked) {
+      primary.title = 'Resolve the merge conflicts first.';
+    }
     primary.addEventListener('click', function () {
       commit(primaryMode, 'none');
     });
     const caret = el('button', 'caret');
     caret.title = 'More commit options';
     caret.appendChild(icon('chevron-down'));
-    caret.disabled = state.busy;
+    caret.disabled = state.busy || blocked;
     caret.addEventListener('click', function (event) {
       const primaryLabel = hasStaged ? 'Commit Staged' : 'Commit All';
       const otherMode = hasStaged ? 'all' : 'staged';
@@ -355,9 +406,18 @@
    */
   function renderFilesSection(active, kind) {
     const isStaged = kind === 'staged';
-    const changes = isStaged ? active.staged : active.unstaged;
-    const nodes = isStaged ? active.stagedTree : active.unstagedTree;
-    const sectionKey = isStaged ? 'staged' : 'changes';
+    const isConflicts = kind === 'conflicts';
+    const changes = isConflicts
+      ? active.conflicts
+      : isStaged
+        ? active.staged
+        : active.unstaged;
+    const nodes = isConflicts
+      ? active.conflictsTree
+      : isStaged
+        ? active.stagedTree
+        : active.unstagedTree;
+    const sectionKey = kind === 'unstaged' ? 'changes' : kind;
     const prefix = kind + ':';
 
     const actions = [
@@ -373,7 +433,10 @@
       }),
     ];
 
-    if (isStaged) {
+    if (isConflicts) {
+      // Nothing sensible applies to every conflict at once; resolution is per
+      // file, and staging an unresolved one is what git refuses anyway.
+    } else if (isStaged) {
       actions.push(
         iconButton('remove', 'Unstage all changes', function () {
           post({ type: 'unstage', paths: ['.'] });
@@ -410,7 +473,11 @@
     section.appendChild(
       sectionHeader(
         sectionKey,
-        (isStaged ? 'Staged Changes (' : 'Changes (') + changes.length + ')',
+        (isConflicts
+          ? 'Merge Conflicts ('
+          : isStaged
+            ? 'Staged Changes ('
+            : 'Changes (') + changes.length + ')',
         actions
       )
     );
@@ -423,7 +490,13 @@
     tree.setAttribute('role', 'tree');
 
     if (changes.length === 0) {
-      tree.appendChild(el('div', 'empty', isStaged ? 'No staged changes.' : 'No changes.'));
+      tree.appendChild(
+        el(
+          'div',
+          'empty',
+          isConflicts ? 'No conflicts.' : isStaged ? 'No staged changes.' : 'No changes.'
+        )
+      );
       section.appendChild(tree);
       return section;
     }
@@ -438,15 +511,16 @@
     tree.appendChild(repoRow);
 
     if (repoOpen) {
-      renderNodes(tree, nodes, 1, prefix);
+      renderNodes(tree, nodes, 1, prefix, kind);
     }
 
     section.appendChild(tree);
     return section;
   }
 
-  function renderNodes(container, nodes, depth, prefix) {
-    const isStagedSection = prefix.indexOf('staged') === 0;
+  function renderNodes(container, nodes, depth, prefix, kind) {
+    const isStagedSection = kind === 'staged';
+    const isConflicts = kind === 'conflicts';
     for (const node of nodes) {
       if (node.kind === 'folder') {
         const key = prefix + node.key;
@@ -464,10 +538,13 @@
           toggle(key, open);
         });
 
-        // Whole-folder actions on hover, as Visual Studio offers.
+        // Whole-folder actions on hover, as Visual Studio offers. Conflicts
+        // are resolved one file at a time, so that section gets none.
         folderRow.appendChild(el('span', 'spacer'));
         const folderActions = el('div', 'row-actions');
-        if (isStagedSection) {
+        if (isConflicts) {
+          folderActions.appendChild(el('span'));
+        } else if (isStagedSection) {
           folderActions.appendChild(
             iconButton('remove', 'Unstage this folder', function () {
               post({ type: 'unstage', paths: [node.key] });
@@ -489,10 +566,10 @@
 
         container.appendChild(folderRow);
         if (open) {
-          renderNodes(container, node.children, depth + 1, prefix);
+          renderNodes(container, node.children, depth + 1, prefix, kind);
         }
       } else {
-        container.appendChild(fileRow(node, depth));
+        container.appendChild(fileRow(node, depth, kind));
       }
     }
   }
@@ -654,8 +731,9 @@
     ignored: ['I', 'status-ignored', 'Ignored'],
   };
 
-  function fileRow(node, depth) {
+  function fileRow(node, depth, kind) {
     const change = node.change;
+    const isConflict = kind === 'conflicts';
     const mapped = STATUS_LETTERS[change.status] || STATUS_LETTERS.modified;
     const fileNode = row('file', depth, null, node.label, null, null);
     fileNode.insertBefore(fileTypeNode(node.label), fileNode.querySelector('.label'));
@@ -672,29 +750,42 @@
     fileNode.appendChild(el('span', 'spacer'));
 
     const actions = el('div', 'row-actions');
-    actions.appendChild(
-      iconButton('git-compare', 'Open changes', function () {
-        post({ type: 'openChange', path: change.path });
-      })
-    );
-    if (change.staged) {
+    if (isConflict) {
       actions.appendChild(
-        iconButton('remove', 'Unstage', function () {
-          post({ type: 'unstage', paths: [change.path] });
+        iconButton('git-merge', 'Open in the merge editor', function () {
+          post({ type: 'openMergeEditor', path: change.path });
+        })
+      );
+      actions.appendChild(
+        iconButton('check', 'Mark as resolved', function () {
+          post({ type: 'markResolved', path: change.path });
         })
       );
     } else {
       actions.appendChild(
-        iconButton('add', 'Stage', function () {
-          post({ type: 'stage', paths: [change.path] });
+        iconButton('git-compare', 'Open changes', function () {
+          post({ type: 'openChange', path: change.path });
+        })
+      );
+      if (change.staged) {
+        actions.appendChild(
+          iconButton('remove', 'Unstage', function () {
+            post({ type: 'unstage', paths: [change.path] });
+          })
+        );
+      } else {
+        actions.appendChild(
+          iconButton('add', 'Stage', function () {
+            post({ type: 'stage', paths: [change.path] });
+          })
+        );
+      }
+      actions.appendChild(
+        iconButton('discard', 'Discard changes', function () {
+          post({ type: 'discard', path: change.path });
         })
       );
     }
-    actions.appendChild(
-      iconButton('discard', 'Discard changes', function () {
-        post({ type: 'discard', path: change.path });
-      })
-    );
     fileNode.appendChild(actions);
 
     const letter = el('span', 'status-letter ' + mapped[1], mapped[0]);
@@ -710,6 +801,36 @@
     });
     fileNode.addEventListener('contextmenu', function (event) {
       state.selected = change.path;
+      if (isConflict) {
+        const current = state.model.active;
+        const ours = current.branch;
+        const theirs = (current.operation && current.operation.ref) || 'the incoming side';
+        showMenu(event, [
+          {
+            label: 'Open in the Merge Editor',
+            run: function () { post({ type: 'openMergeEditor', path: change.path }); },
+          },
+          '-',
+          {
+            label: 'Take Current (' + ours + ')',
+            run: function () {
+              post({ type: 'resolveConflict', path: change.path, side: 'ours' });
+            },
+          },
+          {
+            label: 'Take Incoming (' + theirs + ')',
+            run: function () {
+              post({ type: 'resolveConflict', path: change.path, side: 'theirs' });
+            },
+          },
+          '-',
+          {
+            label: 'Mark as Resolved',
+            run: function () { post({ type: 'markResolved', path: change.path }); },
+          },
+        ]);
+        return;
+      }
       showMenu(event, [
         {
           label: 'Open Changes',

@@ -7,9 +7,10 @@ import { buildTree, TreeNode } from './tree';
 interface ViewModel {
   repos: { root: string; name: string }[];
   active?: RepoSnapshot & {
-    /** Trees for the two sections; kept apart so each expands independently. */
+    /** Trees for the sections; kept apart so each expands independently. */
     unstagedTree: TreeNode[];
     stagedTree: TreeNode[];
+    conflictsTree: TreeNode[];
     displayRoot: string;
   };
   separator: string;
@@ -35,6 +36,10 @@ type Inbound =
   | { type: 'unstage'; paths: string[] }
   | { type: 'discard'; path: string }
   | { type: 'discardFolder'; path: string }
+  | { type: 'resolveConflict'; path: string; side: 'ours' | 'theirs' }
+  | { type: 'markResolved'; path: string }
+  | { type: 'openMergeEditor'; path: string }
+  | { type: 'abortOperation' }
   | { type: 'stashPush' }
   | { type: 'stash'; op: 'apply' | 'pop' | 'drop'; index: number }
   | { type: 'stashClear' }
@@ -158,6 +163,7 @@ export class ChangesViewProvider implements vscode.WebviewViewProvider {
           ...snapshot,
           unstagedTree: buildTree(snapshot.unstaged, separator),
           stagedTree: buildTree(snapshot.staged, separator),
+          conflictsTree: buildTree(snapshot.conflicts, separator),
           displayRoot: this.activeRoot,
         };
       } catch (err) {
@@ -237,6 +243,22 @@ export class ChangesViewProvider implements vscode.WebviewViewProvider {
 
         case 'discardFolder':
           await this.discardFolder(root, message.path);
+          break;
+
+        case 'resolveConflict':
+          await this.git.resolveWith(root, message.path, message.side);
+          break;
+
+        case 'markResolved':
+          await this.git.markResolved(root, message.path);
+          break;
+
+        case 'openMergeEditor':
+          await this.openMergeEditor(root, message.path);
+          break;
+
+        case 'abortOperation':
+          await this.abortOperation(root);
           break;
 
         case 'stashPush':
@@ -378,6 +400,39 @@ export class ChangesViewProvider implements vscode.WebviewViewProvider {
     if (untracked.length) {
       await this.git.exec(root, ['clean', '-fdq', '--', folder]);
     }
+  }
+
+  /**
+   * VS Code's own three-way merge editor understands conflict markers in the
+   * working tree, so a conflicted file can simply be handed to it.
+   */
+  private async openMergeEditor(root: string, relPath: string): Promise<void> {
+    const uri = vscode.Uri.file(path.join(root, relPath));
+    try {
+      await vscode.commands.executeCommand('git.openMergeEditor', uri);
+    } catch {
+      await vscode.window.showTextDocument(uri, { preview: true });
+    }
+  }
+
+  private async abortOperation(root: string): Promise<void> {
+    const snapshot = await this.git.snapshot(root, false);
+    const operation = snapshot.operation;
+    if (!operation) {
+      return;
+    }
+    const answer = await vscode.window.showWarningMessage(
+      `Abort the ${operation.kind} in progress?`,
+      {
+        modal: true,
+        detail: 'The working tree returns to how it was before the operation started.',
+      },
+      `Abort ${operation.kind}`
+    );
+    if (!answer) {
+      return;
+    }
+    await this.git.exec(root, [operation.kind, '--abort']);
   }
 
   private async stashPush(root: string): Promise<void> {

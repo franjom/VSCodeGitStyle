@@ -1,3 +1,5 @@
+// Generated for the design preview. The conflict rows and the in-progress
+// merge are synthesized; everything else came from a real repository.
 window.__VSG_MODEL = {
  "repos": [
   {
@@ -82,6 +84,22 @@ window.__VSG_MODEL = {
     "staged": false
    }
   ],
+  "conflicts": [
+   {
+    "path": "Mcs.Skzz.Api/Controllers/Api/WidgetSettings/WidgetSettingsController.cs",
+    "status": "conflict",
+    "staged": false
+   },
+   {
+    "path": "Mcs.Skzz.Common/Constants.cs",
+    "status": "conflict",
+    "staged": false
+   }
+  ],
+  "operation": {
+   "kind": "merge",
+   "ref": "Insurance_Specifications_Rewrite"
+  },
   "stashes": [
    {
     "index": 0,
@@ -313,6 +331,44 @@ window.__VSG_MODEL = {
      }
     ],
     "fileCount": 2
+   }
+  ],
+  "conflictsTree": [
+   {
+    "kind": "folder",
+    "key": "Mcs.Skzz.Api/Controllers/Api/WidgetSettings",
+    "label": "Mcs.Skzz.Api\\Controllers\\Api\\WidgetSettings",
+    "children": [
+     {
+      "kind": "file",
+      "key": "Mcs.Skzz.Api/Controllers/Api/WidgetSettings/WidgetSettingsController.cs",
+      "label": "WidgetSettingsController.cs",
+      "change": {
+       "path": "Mcs.Skzz.Api/Controllers/Api/WidgetSettings/WidgetSettingsController.cs",
+       "status": "conflict",
+       "staged": false
+      }
+     }
+    ],
+    "fileCount": 1
+   },
+   {
+    "kind": "folder",
+    "key": "Mcs.Skzz.Common",
+    "label": "Mcs.Skzz.Common",
+    "children": [
+     {
+      "kind": "file",
+      "key": "Mcs.Skzz.Common/Constants.cs",
+      "label": "Constants.cs",
+      "change": {
+       "path": "Mcs.Skzz.Common/Constants.cs",
+       "status": "conflict",
+       "staged": false
+      }
+     }
+    ],
+    "fileCount": 1
    }
   ],
   "displayRoot": "E:\\Razvoj\\MedicusStack\\MedicusNet"

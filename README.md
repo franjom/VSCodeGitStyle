@@ -38,11 +38,27 @@ theme tokens so it follows the active colour theme.
 | `Amend` checkbox | done |
 | `Changes (n)` tree: repo root, folders, files | done, single-child folder chains collapsed like VS |
 | `Staged Changes (n)` as its own section | done; appears only when something is staged, with its own tree and expansion state |
+| `Merge Conflicts (n)` section | done; shown above the others while a merge, rebase, cherry-pick or revert is unresolved |
+| Resolve a conflict | done: open in VS Code's merge editor, take current, take incoming, or mark resolved |
+| In-progress operation banner | done, naming what is being merged, with an Abort link |
 | Per-file stage / unstage / discard / open changes | done, on hover and in the context menu |
 | Change-type colouring per file | done, using the theme's `gitDecoration` colours |
 | `Stashes (n)` list with `{ n } On <branch>: <message>` | done |
 | Stash apply / pop / drop, `Drop All` | done |
 | Multiple repositories in one workspace | first repository is shown; switching is not surfaced in the UI yet |
+
+### Conflicts and interrupted operations
+
+An unmerged path is neither staged nor unstaged - git will not commit it at all
+until it is resolved - so conflicts get their own list rather than being folded
+into Changes. While any remain, the commit button is disabled with a tooltip
+saying why.
+
+The operation the working tree is sitting in is detected by verifying the
+pseudo-refs git writes for it: `MERGE_HEAD`, `REBASE_HEAD`, `CHERRY_PICK_HEAD`
+and `REVERT_HEAD`. Each survives until the operation is completed or aborted,
+so no `.git` internals are read. `name-rev` turns the ref into the branch name
+shown in the banner and in the Take Current / Take Incoming labels.
 
 ### Why the two lists are read separately
 

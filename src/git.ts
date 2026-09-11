@@ -20,6 +20,13 @@ export interface FileChange {
   staged: boolean;
 }
 
+/** An interrupted operation that the working tree is currently sitting in. */
+export interface RepoOperation {
+  kind: 'merge' | 'rebase' | 'cherry-pick' | 'revert';
+  /** What is being merged in, when it can be named. */
+  ref?: string;
+}
+
 export interface StashEntry {
   index: number;
   /** Already formatted the way Visual Studio shows it: "On branch: message". */
@@ -41,6 +48,9 @@ export interface RepoSnapshot {
   staged: FileChange[];
   /** Entries from the worktree column, plus untracked files: "Changes". */
   unstaged: FileChange[];
+  /** Unmerged paths, kept out of the other two lists. */
+  conflicts: FileChange[];
+  operation?: RepoOperation;
   stashes: StashEntry[];
 }
 
@@ -109,6 +119,7 @@ export class Git {
 
     const upstream = await this.upstream(root);
     const counts = upstream ? await this.aheadBehind(root) : { ahead: 0, behind: 0 };
+    const operation = await this.operation(root);
 
     return {
       root,
@@ -121,6 +132,8 @@ export class Git {
       behind: counts.behind,
       staged: status.staged,
       unstaged: status.unstaged,
+      conflicts: status.conflicts,
+      operation,
       stashes,
     };
   }
@@ -184,7 +197,7 @@ export class Git {
   private async status(
     root: string,
     includeIgnored: boolean
-  ): Promise<{ staged: FileChange[]; unstaged: FileChange[] }> {
+  ): Promise<{ staged: FileChange[]; unstaged: FileChange[]; conflicts: FileChange[] }> {
     const args = ['status', '--porcelain=v2', '-z', '--untracked-files=all'];
     if (includeIgnored) {
       args.push('--ignored=matching');
@@ -193,6 +206,7 @@ export class Git {
     const tokens = out.split(SEPARATOR);
     const staged: FileChange[] = [];
     const unstaged: FileChange[] = [];
+    const conflicts: FileChange[] = [];
 
     for (let i = 0; i < tokens.length; i++) {
       const line = tokens[i];
@@ -228,8 +242,10 @@ export class Git {
         }
       } else if (kind === 'u') {
         // u <XY> <sub> <m1> <m2> <m3> <mW> <h1> <h2> <h3> <path>
+        // Unmerged paths are neither staged nor unstaged: until they are
+        // resolved they cannot be committed at all, so they get their own list.
         const parts = line.split(' ');
-        unstaged.push({
+        conflicts.push({
           path: toPosix(parts.slice(10).join(' ')),
           status: 'conflict',
           staged: false,
@@ -243,7 +259,54 @@ export class Git {
 
     byPath(staged);
     byPath(unstaged);
-    return { staged, unstaged };
+    byPath(conflicts);
+    return { staged, unstaged, conflicts };
+  }
+
+  /**
+   * Detects an operation left half-finished in the working tree. Each of these
+   * writes a pseudo-ref that survives until the operation is completed or
+   * aborted, so verifying the ref is enough - no reading of .git internals.
+   */
+  private async operation(root: string): Promise<RepoOperation | undefined> {
+    const probes: { ref: string; kind: RepoOperation['kind'] }[] = [
+      { ref: 'MERGE_HEAD', kind: 'merge' },
+      { ref: 'REBASE_HEAD', kind: 'rebase' },
+      { ref: 'CHERRY_PICK_HEAD', kind: 'cherry-pick' },
+      { ref: 'REVERT_HEAD', kind: 'revert' },
+    ];
+
+    for (const probe of probes) {
+      const hash = await this.tryExec(root, ['rev-parse', '-q', '--verify', probe.ref]);
+      if (!hash?.trim()) {
+        continue;
+      }
+      const named = await this.tryExec(root, [
+        'name-rev',
+        '--name-only',
+        '--refs=refs/heads/*',
+        '--refs=refs/remotes/*',
+        probe.ref,
+      ]);
+      const ref = named?.trim();
+      return {
+        kind: probe.kind,
+        ref: ref && ref !== 'undefined' ? ref : hash.trim().slice(0, 7),
+      };
+    }
+    return undefined;
+  }
+
+  // ------------------------------------------------------- conflict resolve ---
+
+  /** Keeps one side of a conflicted file and marks it resolved. */
+  async resolveWith(root: string, filePath: string, side: 'ours' | 'theirs'): Promise<void> {
+    await this.exec(root, ['checkout', `--${side}`, '--', filePath]);
+    await this.exec(root, ['add', '--', filePath]);
+  }
+
+  markResolved(root: string, filePath: string): Promise<string> {
+    return this.exec(root, ['add', '--', filePath]);
   }
 
   private async stashes(root: string): Promise<StashEntry[]> {
