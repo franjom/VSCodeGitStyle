@@ -183,84 +183,12 @@ export class Git {
     return { ahead: ahead ?? 0, behind: behind ?? 0 };
   }
 
-  /**
-   * Parses `git status --porcelain=v2 -z` into the two lists Visual Studio
-   * shows. Version 2 is used rather than v1 because rename records carry the
-   * original path as an explicit extra NUL-separated field, with no ambiguity
-   * about ordering or quoting.
-   *
-   * The XY code carries two independent states: X is the index, Y is the
-   * worktree. A file edited, staged, then edited again is "MM" and genuinely
-   * belongs in both lists, so each column is read on its own rather than
-   * collapsing the file into one entry.
-   */
-  private async status(
-    root: string,
-    includeIgnored: boolean
-  ): Promise<{ staged: FileChange[]; unstaged: FileChange[]; conflicts: FileChange[] }> {
+  private async status(root: string, includeIgnored: boolean): Promise<StatusLists> {
     const args = ['status', '--porcelain=v2', '-z', '--untracked-files=all'];
     if (includeIgnored) {
       args.push('--ignored=matching');
     }
-    const out = await this.exec(root, args);
-    const tokens = out.split(SEPARATOR);
-    const staged: FileChange[] = [];
-    const unstaged: FileChange[] = [];
-    const conflicts: FileChange[] = [];
-
-    for (let i = 0; i < tokens.length; i++) {
-      const line = tokens[i];
-      if (!line) {
-        continue;
-      }
-      const kind = line[0];
-
-      if (kind === '1') {
-        // 1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>
-        const parts = line.split(' ');
-        const xy = parts[1] ?? '..';
-        const path = toPosix(parts.slice(8).join(' '));
-        if (xy[0] !== '.') {
-          staged.push({ path, status: statusFromLetter(xy[0]), staged: true });
-        }
-        if (xy[1] !== '.') {
-          unstaged.push({ path, status: statusFromLetter(xy[1]), staged: false });
-        }
-      } else if (kind === '2') {
-        // 2 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <X><score> <path> NUL <origPath>
-        const parts = line.split(' ');
-        const xy = parts[1] ?? '..';
-        const origPath = toPosix(tokens[++i] ?? '');
-        const path = toPosix(parts.slice(9).join(' '));
-        if (xy[0] !== '.') {
-          staged.push({ path, origPath, status: 'renamed', staged: true });
-        }
-        if (xy[1] !== '.') {
-          // The rename is recorded in the index; any further worktree edit to
-          // the new path is an ordinary unstaged change.
-          unstaged.push({ path, status: statusFromLetter(xy[1]), staged: false });
-        }
-      } else if (kind === 'u') {
-        // u <XY> <sub> <m1> <m2> <m3> <mW> <h1> <h2> <h3> <path>
-        // Unmerged paths are neither staged nor unstaged: until they are
-        // resolved they cannot be committed at all, so they get their own list.
-        const parts = line.split(' ');
-        conflicts.push({
-          path: toPosix(parts.slice(10).join(' ')),
-          status: 'conflict',
-          staged: false,
-        });
-      } else if (kind === '?') {
-        unstaged.push({ path: toPosix(line.slice(2)), status: 'untracked', staged: false });
-      } else if (kind === '!') {
-        unstaged.push({ path: toPosix(line.slice(2)), status: 'ignored', staged: false });
-      }
-    }
-
-    byPath(staged);
-    byPath(unstaged);
-    byPath(conflicts);
-    return { staged, unstaged, conflicts };
+    return parseStatus(await this.exec(root, args));
   }
 
   /**
@@ -427,4 +355,84 @@ function statusFromLetter(code: string | undefined): ChangeStatus {
     default:
       return 'modified';
   }
+}
+
+export interface StatusLists {
+  staged: FileChange[];
+  unstaged: FileChange[];
+  conflicts: FileChange[];
+}
+
+/**
+ * Parses `git status --porcelain=v2 -z` into the lists Visual Studio shows.
+ * Version 2 is used rather than v1 because rename records carry the original
+ * path as an explicit extra NUL-separated field, with no ambiguity about
+ * ordering or quoting.
+ *
+ * The XY code carries two independent states: X is the index, Y is the
+ * worktree. A file edited, staged, then edited again is "MM" and genuinely
+ * belongs in both lists, so each column is read on its own rather than
+ * collapsing the file into one entry.
+ *
+ * Exported as a pure function so it can be tested without a repository.
+ */
+export function parseStatus(out: string): StatusLists {
+  const tokens = out.split(SEPARATOR);
+  const staged: FileChange[] = [];
+  const unstaged: FileChange[] = [];
+  const conflicts: FileChange[] = [];
+
+  for (let i = 0; i < tokens.length; i++) {
+      const line = tokens[i];
+      if (!line) {
+        continue;
+      }
+      const kind = line[0];
+
+      if (kind === '1') {
+        // 1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>
+        const parts = line.split(' ');
+        const xy = parts[1] ?? '..';
+        const path = toPosix(parts.slice(8).join(' '));
+        if (xy[0] !== '.') {
+          staged.push({ path, status: statusFromLetter(xy[0]), staged: true });
+        }
+        if (xy[1] !== '.') {
+          unstaged.push({ path, status: statusFromLetter(xy[1]), staged: false });
+        }
+      } else if (kind === '2') {
+        // 2 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <X><score> <path> NUL <origPath>
+        const parts = line.split(' ');
+        const xy = parts[1] ?? '..';
+        const origPath = toPosix(tokens[++i] ?? '');
+        const path = toPosix(parts.slice(9).join(' '));
+        if (xy[0] !== '.') {
+          staged.push({ path, origPath, status: 'renamed', staged: true });
+        }
+        if (xy[1] !== '.') {
+          // The rename is recorded in the index; any further worktree edit to
+          // the new path is an ordinary unstaged change.
+          unstaged.push({ path, status: statusFromLetter(xy[1]), staged: false });
+        }
+      } else if (kind === 'u') {
+        // u <XY> <sub> <m1> <m2> <m3> <mW> <h1> <h2> <h3> <path>
+        // Unmerged paths are neither staged nor unstaged: until they are
+        // resolved they cannot be committed at all, so they get their own list.
+        const parts = line.split(' ');
+        conflicts.push({
+          path: toPosix(parts.slice(10).join(' ')),
+          status: 'conflict',
+          staged: false,
+        });
+      } else if (kind === '?') {
+        unstaged.push({ path: toPosix(line.slice(2)), status: 'untracked', staged: false });
+      } else if (kind === '!') {
+        unstaged.push({ path: toPosix(line.slice(2)), status: 'ignored', staged: false });
+      }
+    }
+
+  byPath(staged);
+  byPath(unstaged);
+  byPath(conflicts);
+  return { staged, unstaged, conflicts };
 }

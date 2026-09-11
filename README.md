@@ -9,6 +9,7 @@ with its commit graph.
 ```
 npm install
 npm run compile
+npm test
 ```
 
 Then press <kbd>F5</kbd> ("Run Extension"). In the Extension Development Host,
@@ -153,6 +154,42 @@ so VS Code's credential plumbing stays in play.
   `.gitlab-ci.yml` or `.gitlab/` means GitLab, `.github/` means GitHub,
   `azure-pipelines.yml` means Azure DevOps. Set the value explicitly if both
   signals miss.
+
+## Tests
+
+`npm test` compiles and runs the suite with node's built-in runner - no test
+framework, no dependencies. 52 tests in [tests/](tests/):
+
+- **[tests/parse.test.js](tests/parse.test.js)** - the porcelain v2 parser, the
+  log and name-status parsers, and remote URL handling. Table-driven, no git
+  needed: `parseStatus` was extracted as a pure function so the format's awkward
+  corners can be fed in directly.
+- **[tests/layout.test.js](tests/layout.test.js)** - the graph lane engine over
+  synthetic topologies: linear history, a merge and its rejoin, repeated merges,
+  an octopus merge, independent tips, lane reuse, missing parents, empty input.
+  Every case is also walked edge by edge to confirm each line is drawn on every
+  row it crosses and lands on its parent's dot.
+- **[tests/tree.test.js](tests/tree.test.js)** - folder-chain compression,
+  ordering, counts, and paths containing spaces.
+- **[tests/repo.test.js](tests/repo.test.js)** - real repositories built in the
+  temp directory and thrown away: every change type at once, ahead/behind
+  against an upstream, stashes, a conflicted merge and its resolution, abort,
+  amend, discard, commit details for a merge and a root commit, and provider
+  detection.
+
+### Are the tests worth having?
+
+`npm run mutation-check` answers that. It reintroduces five bugs that were
+actually hit while building this - the graph lane drift, collapsing a
+staged-then-edited file into one entry, dropping `--first-parent` from a merge's
+file list, reading a rename's original path without consuming it, and amending
+with an empty message box - then reports whether the suite noticed. All five are
+caught; each mutation is reverted and the sources recompiled afterwards.
+
+The fourth of those was originally missed, which is the point of running it: the
+test written for that bug could not fail, because for ordinary paths not
+advancing the index is genuinely equivalent. It only matters when the original
+path itself looks like a status record, so that is what the test now feeds it.
 
 ## Measured against
 

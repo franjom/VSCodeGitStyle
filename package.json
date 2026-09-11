@@ -105,9 +105,12 @@
   },
   "scripts": {
     "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
+    "mutation-check": "node tools/mutation-check.js",
+    "package": "vsce package --no-dependencies --baseContentUrl https://local.invalid/vs-git-style --baseImagesUrl https://local.invalid/vs-git-style --out vs-git-style.vsix",
+    "test": "npm run compile && node --test",
+    "test:only": "node --test",
     "vscode:prepublish": "npm run compile",
-    "package": "vsce package --no-dependencies --baseContentUrl https://local.invalid/vs-git-style --baseImagesUrl https://local.invalid/vs-git-style --out vs-git-style.vsix"
+    "watch": "tsc -watch -p ./"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
