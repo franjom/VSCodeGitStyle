@@ -262,11 +262,17 @@
     const banner = el('div', 'op-banner' + (active.conflicts.length ? ' blocked' : ''));
     banner.appendChild(icon(active.conflicts.length ? 'warning' : 'git-merge'));
 
-    const label = (OPERATION_LABELS[op.kind] || op.kind) + ' ' + (op.ref || '');
-    const text = active.conflicts.length
+    // The count lives in the Merge Conflicts header already; repeating it here
+    // only made the line too long for a sidebar and truncated the branch name.
+    const label = ((OPERATION_LABELS[op.kind] || op.kind) + ' ' + (op.ref || '')).trim();
+    const text = el('span', 'text', label);
+    text.title = active.conflicts.length
       ? label + ' - resolve ' + active.conflicts.length + ' conflict(s) to continue'
       : label + ' - conflicts resolved, ready to commit';
-    banner.appendChild(el('span', 'text', text.trim()));
+    banner.appendChild(text);
+    if (!active.conflicts.length) {
+      banner.appendChild(el('span', 'ready', 'ready to commit'));
+    }
 
     banner.appendChild(
       link('Abort', function () {
