@@ -1,8 +1,8 @@
 # VS Git Style
 
-A VS Code extension that reproduces the look and feel of the Visual Studio 2026
-**Git Changes** panel. MVP scope: the sidebar panel is functional; the full
-Git Repository window (commit graph) is stubbed for a later pass.
+A VS Code extension that reproduces the look and feel of Visual Studio 2026's
+Git tooling: the **Git Changes** sidebar and the full **Git Repository** window
+with its commit graph.
 
 ## Running it
 
@@ -12,24 +12,26 @@ npm run compile
 ```
 
 Then press <kbd>F5</kbd> ("Run Extension"). In the Extension Development Host,
-click the branch icon in the activity bar to open **Git Changes**.
+click the branch icon in the activity bar to open **Git Changes**; the
+"View all commits" link (or the *VS Git Style: Open Git Repository Window*
+command) opens the graph window.
 
 To iterate on the visual design without launching the extension host, open
-[dev/preview.html](dev/preview.html) in a browser. It loads the real
-`media/main.css` and `media/main.js` against a fake repository model
-(`dev/preview-model.js`) with a stubbed webview API.
+[dev/preview.html](dev/preview.html) or [dev/preview-repo.html](dev/preview-repo.html)
+in a browser. They load the real CSS and JS against captured models with a
+stubbed webview API.
 
-## What is implemented
+## Git Changes (sidebar)
 
-The panel is a `WebviewView` in its own activity-bar container, styled entirely
-with VS Code theme tokens so it follows the active colour theme.
+A `WebviewView` in its own activity-bar container, styled entirely with VS Code
+theme tokens so it follows the active colour theme.
 
 | Visual Studio element | Status |
 | --- | --- |
 | Branch dropdown (checkout on change) | done |
 | Fetch / Pull / Push / Sync buttons | done, delegated to the built-in git commands |
 | `⇅ n / n` outgoing / incoming counts | done, from `rev-list --left-right --count` |
-| "View all commits" link | wired to the phase-2 command |
+| "View all commits" link | done, opens the Git Repository window |
 | Commit message box, `Enter a message <Required>` | done, draft persisted across reloads |
 | AI message generation (sparkle button) | done, via the VS Code Language Model API when a provider exists |
 | `Commit All` split button (+ and Push / and Sync / Commit Staged) | done |
@@ -40,24 +42,60 @@ with VS Code theme tokens so it follows the active colour theme.
 | `Stashes (n)` list with `{ n } On <branch>: <message>` | done |
 | Stash apply / pop / drop, `Drop All` | done |
 | Multiple repositories in one workspace | first repository is shown; switching is not surfaced in the UI yet |
+| Separate Changes / Staged Changes groups | not done; one list, staged files carry a dot |
 
-Reads are done by shelling out to git with machine-readable porcelain formats
-(`status --porcelain=v2 -z`, `for-each-ref`, `stash list --format`). Network
-operations go through the built-in `git.fetch` / `git.pull` / `git.push` /
-`git.sync` commands so VS Code's credential plumbing stays in play.
+## Git Repository window (commit graph)
+
+A `WebviewPanel` in the editor area.
+
+| Visual Studio element | Status |
+| --- | --- |
+| Toolbar: Refresh / Fetch / Pull / Push / Sync | done |
+| `Filter History` box | done, filters on subject, author and hash |
+| `Branch / Tag: <name>` breadcrumb | done |
+| Branches / Tags pane, nested on `/` | done, with a pane filter and a draggable splitter |
+| `remotes/<remote>` and `tags` nodes | done |
+| `Pull Requests` node | placeholder; needs GitHub / Azure DevOps auth |
+| `Incoming (n)` group with Fetch / Pull links | done |
+| `Local History (n Outgoing)` group with Push / Sync links | done |
+| Commit graph with coloured lanes and merge curves | done, SVG, lanes computed in [src/graph.ts](src/graph.ts) |
+| Branch / Tag chips per commit | done, ranked so the current branch and tags survive the cap |
+| Message / Author / Date / ID columns | done |
+| Click to select, double-click for commit details | done, details open as a read-only diff document |
+| Context menu: details, copy ID, new branch here | done |
+| Paging | `Load more commits` in 200-commit pages |
+| Resizable columns | not done; the grid template is fixed except for the graph column |
+| Commit details side pane | not done; details open as an editor document instead |
+
+### How the graph is computed
+
+`git log --date-order` supplies each commit's hash, parents, author, date, refs
+and subject. [src/graph.ts](src/graph.ts) then assigns lanes: `lanes[i]` holds
+the hash lane `i` is waiting for, a lane is created for a branch tip or an extra
+merge parent, and freed once its commit is emitted. Lane indices are never
+compacted, so a line that merely passes a row keeps the same x on both edges and
+stays visually straight. Each row records the lines entering from above, the
+lines leaving towards its parents, and the lines that pass it, which the webview
+draws as one small SVG per row.
+
+The layout was verified against `git log --graph` on a repository with real
+merge topology, including a check that every parent edge lands in the lane where
+that parent's own dot sits.
+
+Reads shell out to git with machine-readable formats (`status --porcelain=v2 -z`,
+`for-each-ref`, `stash list --format`, `log --format`). Network operations go
+through the built-in `git.fetch` / `git.pull` / `git.push` / `git.sync` commands
+so VS Code's credential plumbing stays in play.
 
 ## Deliberately deferred (placeholders in place)
 
-- **Git Repository window / commit graph** — [src/repositoryWindow.ts](src/repositoryWindow.ts)
-  holds the command and a description of the intended implementation. The
-  "View all commits" link already calls it.
 - **Keyboard navigation and screen-reader support** — `installKeyboardNavigation()`
-  in [media/main.js](media/main.js) is an empty hook. Every row already carries
-  `role="treeitem"`, `aria-level` and `aria-expanded`, so a future pass only
-  needs a roving tabindex plus arrow/Home/End handling.
-- **Pull Requests node** — needs GitHub / Azure DevOps authentication.
-- **Row virtualization** — fine for the low thousands of rows; a graph over a
-  large history will need it.
+  in both [media/main.js](media/main.js) and [media/repo.js](media/repo.js) is an
+  empty hook. Every row already carries `role`, `aria-level` and `aria-expanded`,
+  so a future pass only needs a roving tabindex plus arrow/Home/End handling.
+- **Pull Requests** — needs GitHub / Azure DevOps authentication.
+- **Row virtualization** — every loaded commit is a live DOM row. Fine for a few
+  thousand; a very large history wants windowing.
 
 ## Settings
 

@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<!--
+  Dev harness for the Git Repository window. Loads the real media/repo.css and
+  media/repo.js with a stubbed webview API and a captured model, so the commit
+  graph can be inspected without launching an Extension Development Host.
+  Not shipped as part of the extension's runtime.
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Git Repository - preview</title>
+<link href="../media/codicon.css" rel="stylesheet">
+<link href="../media/repo.css" rel="stylesheet">
+<style>
+  /* Approximation of VS Code's Dark Modern tokens. */
+  :root {
+    --vscode-font-family: "Segoe UI", system-ui, sans-serif;
+    --vscode-font-size: 13px;
+    --vscode-editor-font-family: Consolas, "Courier New", monospace;
+    --vscode-foreground: #cccccc;
+    --vscode-editor-background: #1f1f1f;
+    --vscode-panel-border: #2b2b2b;
+    --vscode-descriptionForeground: #9d9d9d;
+    --vscode-input-background: #313131;
+    --vscode-input-foreground: #cccccc;
+    --vscode-input-border: #3c3c3c;
+    --vscode-focusBorder: #0078d4;
+    --vscode-textLink-foreground: #4daafc;
+    --vscode-textLink-activeForeground: #6cb8ff;
+    --vscode-list-hoverBackground: #2a2d2e;
+    --vscode-list-activeSelectionBackground: #04395e;
+    --vscode-list-activeSelectionForeground: #ffffff;
+    --vscode-badge-background: #0078d4;
+    --vscode-badge-foreground: #ffffff;
+    --vscode-progressBar-background: #0078d4;
+    --vscode-editorGroupHeader-tabsBackground: #181818;
+    --vscode-menu-background: #1f1f1f;
+    --vscode-menu-foreground: #cccccc;
+    --vscode-menu-border: #454545;
+    --vscode-menu-selectionBackground: #04395e;
+    --vscode-menu-selectionForeground: #ffffff;
+    --vscode-menu-separatorBackground: #454545;
+    --vscode-symbolIcon-folderForeground: #dcb67a;
+  }
+</style>
+</head>
+<body>
+<div id="root" class="repo-shell"></div>
+<div id="menu" class="context-menu" hidden></div>
+
+<script src="./preview-repo-model.js"></script>
+<script>
+  let stored = {};
+  window.acquireVsCodeApi = function () {
+    return {
+      getState: function () { return stored; },
+      setState: function (next) { stored = next; },
+      postMessage: function (message) {
+        console.log('[preview] postMessage', message);
+        if (message.type === 'ready' || message.type === 'refresh') {
+          window.dispatchEvent(
+            new MessageEvent('message', { data: { type: 'model', model: window.__VSG_REPO_MODEL } })
+          );
+        }
+      },
+    };
+  };
+</script>
+<script src="../media/repo.js"></script>
+</body>
+</html>

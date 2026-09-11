@@ -2,13 +2,9 @@ import * as vscode from 'vscode';
 import { ChangesViewProvider } from './changesView';
 import { Git } from './git';
 import { activateGitApi } from './gitExtension';
-import { openRepositoryWindow } from './repositoryWindow';
+import { CommitContentProvider, COMMIT_SCHEME, RepositoryWindow } from './repositoryWindow';
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  context.subscriptions.push(
-    vscode.commands.registerCommand('vsGitStyle.openRepositoryWindow', openRepositoryWindow)
-  );
-
   const api = await activateGitApi();
   if (!api) {
     void vscode.window.showWarningMessage(
@@ -25,7 +21,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.window.registerWebviewViewProvider(ChangesViewProvider.viewType, provider, {
       webviewOptions: { retainContextWhenHidden: true },
     }),
-    vscode.commands.registerCommand('vsGitStyle.refresh', () => provider.scheduleRefresh(0))
+    vscode.workspace.registerTextDocumentContentProvider(
+      COMMIT_SCHEME,
+      new CommitContentProvider(git)
+    ),
+    vscode.commands.registerCommand('vsGitStyle.refresh', () => provider.scheduleRefresh(0)),
+    vscode.commands.registerCommand('vsGitStyle.openRepositoryWindow', () =>
+      RepositoryWindow.show(context.extensionUri, api, git)
+    )
   );
 
   // The built-in git extension only fires state changes for things it notices;
