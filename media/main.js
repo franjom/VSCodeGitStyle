@@ -131,11 +131,12 @@
     root.appendChild(renderCommitArea(active));
 
     const content = el('div', 'content');
-    content.appendChild(renderFilesSection(active, 'unstaged'));
-    // Visual Studio only shows the staged section once something is staged.
+    // Visual Studio puts Staged Changes above Changes, and only shows it once
+    // something is actually staged.
     if (active.staged.length > 0) {
       content.appendChild(renderFilesSection(active, 'staged'));
     }
+    content.appendChild(renderFilesSection(active, 'unstaged'));
     content.appendChild(renderStashesSection(active));
     root.appendChild(content);
     content.scrollTop = scrollTop;
@@ -501,20 +502,21 @@
     return node;
   }
 
-  const STATUS_ICONS = {
-    added: ['diff-added', 'status-added'],
-    modified: ['diff-modified', 'status-modified'],
-    deleted: ['diff-removed', 'status-deleted'],
-    renamed: ['diff-renamed', 'status-renamed'],
-    untracked: ['diff-added', 'status-untracked'],
-    conflict: ['warning', 'status-conflict'],
-    ignored: ['diff-ignored', 'status-ignored'],
+  // Visual Studio shows a file icon on the left and a single status letter
+  // right-aligned at the end of the row.
+  const STATUS_LETTERS = {
+    added: ['A', 'status-added', 'Added'],
+    modified: ['M', 'status-modified', 'Modified'],
+    deleted: ['D', 'status-deleted', 'Deleted'],
+    renamed: ['R', 'status-renamed', 'Renamed'],
+    untracked: ['U', 'status-untracked', 'Untracked'],
+    conflict: ['!', 'status-conflict', 'Conflicted'],
+    ignored: ['I', 'status-ignored', 'Ignored'],
   };
 
   function fileRow(node, depth) {
     const change = node.change;
-    const mapped = STATUS_ICONS[change.status] || STATUS_ICONS.modified;
-    const fileNode = row('file', depth, null, node.label, mapped[0], mapped[1]);
+    const fileNode = row('file', depth, null, node.label, 'file', null);
     fileNode.dataset.menu = '1';
     fileNode.title =
       change.path + (change.origPath ? '  (was ' + change.origPath + ')' : '');
@@ -522,6 +524,8 @@
     if (state.selected === change.path) {
       fileNode.classList.add('selected');
     }
+
+    fileNode.appendChild(el('span', 'spacer'));
 
     const actions = el('div', 'row-actions');
     actions.appendChild(
@@ -548,6 +552,11 @@
       })
     );
     fileNode.appendChild(actions);
+
+    const mapped = STATUS_LETTERS[change.status] || STATUS_LETTERS.modified;
+    const letter = el('span', 'status-letter ' + mapped[1], mapped[0]);
+    letter.title = mapped[2];
+    fileNode.appendChild(letter);
 
     fileNode.addEventListener('click', function () {
       state.selected = change.path;
