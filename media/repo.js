@@ -127,14 +127,14 @@
     return node;
   }
 
-  /**
-   * One SVG per commit row. Lines are drawn between the row's own edges only,
-   * so rows stay independent and the graph stitches together vertically.
-   */
   function graphWidth(maxLanes) {
     return Math.max(laneX(maxLanes - 1) + 10, 28);
   }
 
+  /**
+   * One SVG per commit row. Lines are drawn between the row's own edges only,
+   * so rows stay independent and the graph stitches together vertically.
+   */
   function graphCell(row, maxLanes) {
     const width = graphWidth(maxLanes);
     const svg = document.createElementNS(SVG_NS, 'svg');
@@ -546,21 +546,31 @@
       }
     }
 
-    // Placeholder: needs GitHub / Azure DevOps authentication to populate.
-    const prOpen = isOpen('pullRequests');
-    const prRow = treeRow({
-      kind: 'group-node',
-      depth: 0,
-      open: prOpen,
-      codicon: 'git-pull-request',
-      label: 'Pull Requests',
-    });
-    prRow.addEventListener('click', function () {
-      toggleTree('pullRequests');
-    });
-    scroll.appendChild(prRow);
-    if (prOpen) {
-      scroll.appendChild(el('div', 'empty', 'Not connected to a hosting provider.'));
+    // Placeholder: populating this needs the provider's API and a token.
+    // The label follows the provider because GitLab calls these merge requests.
+    const review = model.review || { provider: 'unknown', label: 'Pull Requests' };
+    if (review.provider !== 'none') {
+      const prOpen = isOpen('pullRequests');
+      const prRow = treeRow({
+        kind: 'group-node',
+        depth: 0,
+        open: prOpen,
+        codicon: 'git-pull-request',
+        label: review.label,
+      });
+      prRow.addEventListener('click', function () {
+        toggleTree('pullRequests');
+      });
+      scroll.appendChild(prRow);
+      if (prOpen) {
+        const note = review.host
+          ? 'Not implemented yet (' + review.host +
+            (review.provider === 'unknown'
+              ? ' - set vsGitStyle.reviewProvider'
+              : ', ' + review.provider) + ').'
+          : 'No origin remote.';
+        scroll.appendChild(el('div', 'empty', note));
+      }
     }
 
     pane.appendChild(scroll);

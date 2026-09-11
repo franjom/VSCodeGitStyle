@@ -69,6 +69,26 @@
           "default": true,
           "description": "Ask for confirmation before discarding changes to a file."
         },
+        "vsGitStyle.graphPageSize": {
+          "type": "number",
+          "default": 200,
+          "minimum": 20,
+          "maximum": 2000,
+          "description": "How many commits the Git Repository window loads per page. Rows are not virtualized, so very large pages slow the window down."
+        },
+        "vsGitStyle.reviewProvider": {
+          "type": "string",
+          "enum": ["auto", "github", "gitlab", "azure", "none"],
+          "default": "auto",
+          "enumDescriptions": [
+            "Guess from the origin URL. A self-hosted host cannot be recognised this way - set the provider explicitly.",
+            "GitHub pull requests.",
+            "GitLab merge requests.",
+            "Azure DevOps pull requests.",
+            "Hide the node entirely."
+          ],
+          "description": "Which code review provider the Git Repository window's review node represents."
+        },
         "vsGitStyle.showIgnoredFiles": {
           "type": "boolean",
           "default": false,

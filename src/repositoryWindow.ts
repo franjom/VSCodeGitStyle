@@ -2,17 +2,32 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { Git } from './git';
 import { GitApi } from './gitExtension';
-import { GraphModel, readGraph, readRefs, RefEntry } from './graph';
+import {
+  GraphModel,
+  readGraph,
+  readRefs,
+  readReviewInfo,
+  RefEntry,
+  ReviewInfo,
+  ReviewProvider,
+} from './graph';
 
 export const COMMIT_SCHEME = 'vsgitstyle-commit';
 
-const PAGE_SIZE = 200;
+const DEFAULT_PAGE_SIZE = 200;
+
+function pageSize(): number {
+  return vscode.workspace
+    .getConfiguration('vsGitStyle')
+    .get<number>('graphPageSize', DEFAULT_PAGE_SIZE);
+}
 
 interface WindowModel {
   repoName: string;
   root: string;
   refs: RefEntry[];
   graph: GraphModel;
+  review: ReviewInfo;
 }
 
 type Inbound =
@@ -49,7 +64,7 @@ export class RepositoryWindow {
   private readonly panel: vscode.WebviewPanel;
   private readonly disposables: vscode.Disposable[] = [];
   private scope: string | undefined;
-  private limit = PAGE_SIZE;
+  private limit = pageSize();
 
   private constructor(
     private readonly extensionUri: vscode.Uri,
@@ -94,12 +109,12 @@ export class RepositoryWindow {
 
         case 'setScope':
           this.scope = message.scope;
-          this.limit = PAGE_SIZE;
+          this.limit = pageSize();
           await this.load();
           return;
 
         case 'loadMore':
-          this.limit += PAGE_SIZE;
+          this.limit += pageSize();
           await this.load();
           return;
 
@@ -148,12 +163,17 @@ export class RepositoryWindow {
       this.scope = refs.find((r) => r.current)?.short ?? 'HEAD';
     }
     const graph = await readGraph(this.git, this.root, this.scope, this.limit);
+    const configured = vscode.workspace
+      .getConfiguration('vsGitStyle')
+      .get<ReviewProvider | 'auto'>('reviewProvider', 'auto');
+    const review = await readReviewInfo(this.git, this.root, configured);
 
     const model: WindowModel = {
       repoName: path.basename(this.root),
       root: this.root,
       refs,
       graph,
+      review,
     };
     this.post({ type: 'model', model });
     this.post({ type: 'busy', busy: false });

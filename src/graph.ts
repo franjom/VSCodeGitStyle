@@ -83,6 +83,77 @@ const LOG_FORMAT = [
   '%s',
 ].join(UNIT) + RECORD;
 
+export type ReviewProvider = 'github' | 'gitlab' | 'azure' | 'unknown';
+
+export interface ReviewInfo {
+  provider: ReviewProvider;
+  host?: string;
+  /** "Pull Requests" or, for GitLab, "Merge Requests". */
+  label: string;
+}
+
+/**
+ * Extracts the host from any of the URL shapes git accepts for a remote:
+ * scp-like (git@host:group/repo.git), ssh:// with an optional port, and
+ * http(s):// with optional credentials.
+ */
+export function remoteHost(url: string): string | undefined {
+  const trimmed = url.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  const scp = /^[^/@]+@([^:/]+):/.exec(trimmed);
+  if (scp) {
+    return scp[1];
+  }
+  const scheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\/(?:[^@/]*@)?([^:/]+)/.exec(trimmed);
+  if (scheme) {
+    return scheme[1];
+  }
+  return undefined;
+}
+
+/**
+ * Guesses the review provider from the host. A self-hosted instance cannot be
+ * recognised this way - git.example.com says nothing about what runs on it - so
+ * the `vsGitStyle.reviewProvider` setting overrides this.
+ */
+export function providerFromHost(host: string | undefined): ReviewProvider {
+  if (!host) {
+    return 'unknown';
+  }
+  const lower = host.toLowerCase();
+  if (lower === 'github.com' || lower.endsWith('.github.com')) {
+    return 'github';
+  }
+  if (lower === 'gitlab.com' || lower.endsWith('.gitlab.com') || lower.startsWith('gitlab.')) {
+    return 'gitlab';
+  }
+  if (lower === 'dev.azure.com' || lower.endsWith('.visualstudio.com')) {
+    return 'azure';
+  }
+  return 'unknown';
+}
+
+export function labelForProvider(provider: ReviewProvider): string {
+  return provider === 'gitlab' ? 'Merge Requests' : 'Pull Requests';
+}
+
+export async function readReviewInfo(
+  git: Git,
+  root: string,
+  configured: ReviewProvider | 'auto'
+): Promise<ReviewInfo> {
+  let host: string | undefined;
+  try {
+    host = remoteHost(await git.exec(root, ['remote', 'get-url', 'origin']));
+  } catch {
+    host = undefined;
+  }
+  const provider = configured === 'auto' ? providerFromHost(host) : configured;
+  return { provider, host, label: labelForProvider(provider) };
+}
+
 export async function readRefs(git: Git, root: string): Promise<RefEntry[]> {
   const out = await git.exec(root, [
     'for-each-ref',
