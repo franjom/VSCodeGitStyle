@@ -16,7 +16,7 @@ export interface FileChange {
   /** Previous path for renames. */
   origPath?: string;
   status: ChangeStatus;
-  /** Has content in the index (i.e. already staged). */
+  /** Which list this entry belongs to. */
   staged: boolean;
 }
 
@@ -37,7 +37,10 @@ export interface RepoSnapshot {
   ahead: number;
   /** Commits on upstream not on HEAD (Incoming). */
   behind: number;
-  changes: FileChange[];
+  /** Entries from the index column: Visual Studio's "Staged Changes". */
+  staged: FileChange[];
+  /** Entries from the worktree column, plus untracked files: "Changes". */
+  unstaged: FileChange[];
   stashes: StashEntry[];
 }
 
@@ -56,6 +59,9 @@ export interface GitError extends Error {
  * through the built-in git commands so that VS Code's credential plumbing
  * (GIT_ASKPASS, auth providers) stays in play. See extension.ts.
  */
+/** NUL, the record separator used by git's -z output. */
+const SEPARATOR = String.fromCharCode(0);
+
 export class Git {
   constructor(private readonly gitPath: string) {}
 
@@ -94,7 +100,7 @@ export class Git {
   // ---------------------------------------------------------------- reads ---
 
   async snapshot(root: string, includeIgnored: boolean): Promise<RepoSnapshot> {
-    const [head, branches, changes, stashes] = await Promise.all([
+    const [head, branches, status, stashes] = await Promise.all([
       this.head(root),
       this.localBranches(root),
       this.status(root, includeIgnored),
@@ -113,7 +119,8 @@ export class Git {
       upstream,
       ahead: counts.ahead,
       behind: counts.behind,
-      changes,
+      staged: status.staged,
+      unstaged: status.unstaged,
       stashes,
     };
   }
@@ -164,18 +171,28 @@ export class Git {
   }
 
   /**
-   * Parses `git status --porcelain=v2 -z`. Version 2 is used rather than v1
-   * because rename records carry the original path as an explicit extra
-   * NUL-separated field, with no ambiguity about ordering or quoting.
+   * Parses `git status --porcelain=v2 -z` into the two lists Visual Studio
+   * shows. Version 2 is used rather than v1 because rename records carry the
+   * original path as an explicit extra NUL-separated field, with no ambiguity
+   * about ordering or quoting.
+   *
+   * The XY code carries two independent states: X is the index, Y is the
+   * worktree. A file edited, staged, then edited again is "MM" and genuinely
+   * belongs in both lists, so each column is read on its own rather than
+   * collapsing the file into one entry.
    */
-  private async status(root: string, includeIgnored: boolean): Promise<FileChange[]> {
+  private async status(
+    root: string,
+    includeIgnored: boolean
+  ): Promise<{ staged: FileChange[]; unstaged: FileChange[] }> {
     const args = ['status', '--porcelain=v2', '-z', '--untracked-files=all'];
     if (includeIgnored) {
       args.push('--ignored=matching');
     }
     const out = await this.exec(root, args);
-    const tokens = out.split('\0');
-    const changes: FileChange[] = [];
+    const tokens = out.split(SEPARATOR);
+    const staged: FileChange[] = [];
+    const unstaged: FileChange[] = [];
 
     for (let i = 0; i < tokens.length; i++) {
       const line = tokens[i];
@@ -188,39 +205,45 @@ export class Git {
         // 1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>
         const parts = line.split(' ');
         const xy = parts[1] ?? '..';
-        changes.push({
-          path: toPosix(parts.slice(8).join(' ')),
-          status: statusFromXY(xy),
-          staged: isStaged(xy),
-        });
+        const path = toPosix(parts.slice(8).join(' '));
+        if (xy[0] !== '.') {
+          staged.push({ path, status: statusFromLetter(xy[0]), staged: true });
+        }
+        if (xy[1] !== '.') {
+          unstaged.push({ path, status: statusFromLetter(xy[1]), staged: false });
+        }
       } else if (kind === '2') {
         // 2 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <X><score> <path> NUL <origPath>
         const parts = line.split(' ');
         const xy = parts[1] ?? '..';
-        const origPath = tokens[++i] ?? '';
-        changes.push({
-          path: toPosix(parts.slice(9).join(' ')),
-          origPath: toPosix(origPath),
-          status: 'renamed',
-          staged: isStaged(xy),
-        });
+        const origPath = toPosix(tokens[++i] ?? '');
+        const path = toPosix(parts.slice(9).join(' '));
+        if (xy[0] !== '.') {
+          staged.push({ path, origPath, status: 'renamed', staged: true });
+        }
+        if (xy[1] !== '.') {
+          // The rename is recorded in the index; any further worktree edit to
+          // the new path is an ordinary unstaged change.
+          unstaged.push({ path, status: statusFromLetter(xy[1]), staged: false });
+        }
       } else if (kind === 'u') {
         // u <XY> <sub> <m1> <m2> <m3> <mW> <h1> <h2> <h3> <path>
         const parts = line.split(' ');
-        changes.push({
+        unstaged.push({
           path: toPosix(parts.slice(10).join(' ')),
           status: 'conflict',
           staged: false,
         });
       } else if (kind === '?') {
-        changes.push({ path: toPosix(line.slice(2)), status: 'untracked', staged: false });
+        unstaged.push({ path: toPosix(line.slice(2)), status: 'untracked', staged: false });
       } else if (kind === '!') {
-        changes.push({ path: toPosix(line.slice(2)), status: 'ignored', staged: false });
+        unstaged.push({ path: toPosix(line.slice(2)), status: 'ignored', staged: false });
       }
     }
 
-    changes.sort((a, b) => a.path.localeCompare(b.path, undefined, { sensitivity: 'base' }));
-    return changes;
+    byPath(staged);
+    byPath(unstaged);
+    return { staged, unstaged };
   }
 
   private async stashes(root: string): Promise<StashEntry[]> {
@@ -275,6 +298,11 @@ export class Git {
   }
 
   commit(root: string, message: string, amend: boolean): Promise<string> {
+    // Amending with no new text keeps the existing message; passing -m '' here
+    // would silently blank it instead.
+    if (amend && !message) {
+      return this.exec(root, ['commit', '--amend', '--no-edit']);
+    }
     const args = ['commit', '-m', message];
     if (amend) {
       args.push('--amend');
@@ -318,14 +346,11 @@ function toPosix(p: string): string {
   return p.replace(/\\/g, '/');
 }
 
-function isStaged(xy: string): boolean {
-  const x = xy[0];
-  return x !== undefined && x !== '.' && x !== '?';
+function byPath(changes: FileChange[]): void {
+  changes.sort((a, b) => a.path.localeCompare(b.path, undefined, { sensitivity: 'base' }));
 }
 
-function statusFromXY(xy: string): ChangeStatus {
-  // Prefer the worktree column; it is what the user is about to commit with -a.
-  const code = xy[1] !== '.' ? xy[1] : xy[0];
+function statusFromLetter(code: string | undefined): ChangeStatus {
   switch (code) {
     case 'A':
       return 'added';

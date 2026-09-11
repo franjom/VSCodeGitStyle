@@ -11,8 +11,8 @@
   /** @type {{model: any, expanded: Set<string>, sections: Record<string, boolean>, message: string, amend: boolean, selected: string|null, busy: boolean, generating: boolean, error: string|null}} */
   const state = {
     model: null,
-    expanded: new Set(persisted.expanded || ['#repo']),
-    sections: Object.assign({ changes: true, stashes: true }, persisted.sections),
+    expanded: new Set(persisted.expanded || ['unstaged:#repo', 'staged:#repo']),
+    sections: Object.assign({ changes: true, staged: true, stashes: true }, persisted.sections),
     message: persisted.message || '',
     amend: false,
     selected: null,
@@ -131,7 +131,11 @@
     root.appendChild(renderCommitArea(active));
 
     const content = el('div', 'content');
-    content.appendChild(renderChangesSection(active));
+    content.appendChild(renderFilesSection(active, 'unstaged'));
+    // Visual Studio only shows the staged section once something is staged.
+    if (active.staged.length > 0) {
+      content.appendChild(renderFilesSection(active, 'staged'));
+    }
     content.appendChild(renderStashesSection(active));
     root.appendChild(content);
     content.scrollTop = scrollTop;
@@ -261,22 +265,32 @@
 
     const row = el('div', 'commit-row');
     const split = el('div', 'split-button');
-    const primary = el('button', 'primary', 'Commit All');
-    primary.disabled = state.busy || active.changes.length === 0;
+
+    // Visual Studio promotes "Commit Staged" the moment anything is staged,
+    // because that is then what the button would actually do.
+    const hasStaged = active.staged.length > 0;
+    const hasAnything = hasStaged || active.unstaged.length > 0;
+    const primaryMode = hasStaged ? 'staged' : 'all';
+
+    const primary = el('button', 'primary', hasStaged ? 'Commit Staged' : 'Commit All');
+    primary.disabled = state.busy || (!hasAnything && !state.amend);
     primary.addEventListener('click', function () {
-      commit('all');
+      commit(primaryMode, 'none');
     });
     const caret = el('button', 'caret');
     caret.title = 'More commit options';
     caret.appendChild(icon('chevron-down'));
     caret.disabled = state.busy;
     caret.addEventListener('click', function (event) {
+      const primaryLabel = hasStaged ? 'Commit Staged' : 'Commit All';
+      const otherMode = hasStaged ? 'all' : 'staged';
+      const otherLabel = hasStaged ? 'Commit All' : 'Commit Staged';
       showMenu(event, [
-        { label: 'Commit All', run: function () { commit('all'); } },
-        { label: 'Commit All and Push', run: function () { commit('allAndPush'); } },
-        { label: 'Commit All and Sync', run: function () { commit('allAndSync'); } },
+        { label: primaryLabel, run: function () { commit(primaryMode, 'none'); } },
+        { label: primaryLabel + ' and Push', run: function () { commit(primaryMode, 'push'); } },
+        { label: primaryLabel + ' and Sync', run: function () { commit(primaryMode, 'sync'); } },
         '-',
-        { label: 'Commit Staged', run: function () { commit('staged'); } },
+        { label: otherLabel, run: function () { commit(otherMode, 'none'); } },
       ]);
     });
     split.appendChild(primary);
@@ -289,6 +303,7 @@
     amend.checked = state.amend;
     amend.addEventListener('change', function () {
       state.amend = amend.checked;
+      render();
     });
     amendLabel.appendChild(amend);
     amendLabel.appendChild(el('span', null, 'Amend'));
@@ -298,8 +313,14 @@
     return area;
   }
 
-  function commit(mode) {
-    post({ type: 'commit', message: state.message, amend: state.amend, mode: mode });
+  function commit(mode, after) {
+    post({
+      type: 'commit',
+      message: state.message,
+      amend: state.amend,
+      mode: mode,
+      after: after,
+    });
   }
 
   function sectionHeader(key, title, actions, keepActions) {
@@ -325,54 +346,89 @@
     return header;
   }
 
-  function renderChangesSection(active) {
-    const section = el('div', 'section');
-    const header = sectionHeader(
-      'changes',
-      'Changes (' + active.changes.length + ')',
-      [
-        iconButton('collapse-all', 'Collapse all folders', function () {
-          state.expanded.clear();
-          state.expanded.add('#repo');
-          save();
-          render();
-        }),
-        iconButton('add', 'Stage all changes', function () {
-          post({ type: 'stage', paths: ['.'] });
-        }),
-        iconButton('ellipsis', 'More change actions', function (event) {
+  /**
+   * Renders one of the two file sections. Visual Studio keeps "Changes" and
+   * "Staged Changes" apart, and a file edited, staged, then edited again shows
+   * up in both - so expansion state is namespaced per section rather than
+   * keyed on the path alone.
+   */
+  function renderFilesSection(active, kind) {
+    const isStaged = kind === 'staged';
+    const changes = isStaged ? active.staged : active.unstaged;
+    const nodes = isStaged ? active.stagedTree : active.unstagedTree;
+    const sectionKey = isStaged ? 'staged' : 'changes';
+    const prefix = kind + ':';
+
+    const actions = [
+      iconButton('collapse-all', 'Collapse all folders', function () {
+        for (const key of [...state.expanded]) {
+          if (key.indexOf(prefix) === 0) {
+            state.expanded.delete(key);
+          }
+        }
+        state.expanded.add(prefix + '#repo');
+        save();
+        render();
+      }),
+    ];
+
+    if (isStaged) {
+      actions.push(
+        iconButton('remove', 'Unstage all changes', function () {
+          post({ type: 'unstage', paths: ['.'] });
+        })
+      );
+      actions.push(
+        iconButton('ellipsis', 'More staged actions', function (event) {
           showMenu(event, [
-            {
-              label: 'Unstage All',
-              run: function () { post({ type: 'unstage', paths: ['.'] }); },
-            },
-            {
-              label: 'Stash All Changes\u2026',
-              run: function () { post({ type: 'stashPush' }); },
-            },
+            { label: 'Unstage All', run: function () { post({ type: 'unstage', paths: ['.'] }); } },
             '-',
             { label: 'Refresh', run: function () { post({ type: 'refresh' }); } },
           ]);
-        }),
-      ]
-    );
-    section.appendChild(header);
+        })
+      );
+    } else {
+      actions.push(
+        iconButton('add', 'Stage all changes', function () {
+          post({ type: 'stage', paths: ['.'] });
+        })
+      );
+      actions.push(
+        iconButton('ellipsis', 'More change actions', function (event) {
+          showMenu(event, [
+            { label: 'Stage All', run: function () { post({ type: 'stage', paths: ['.'] }); } },
+            { label: 'Stash All Changes…', run: function () { post({ type: 'stashPush' }); } },
+            '-',
+            { label: 'Refresh', run: function () { post({ type: 'refresh' }); } },
+          ]);
+        })
+      );
+    }
 
-    if (state.sections.changes === false) {
+    const section = el('div', 'section');
+    section.appendChild(
+      sectionHeader(
+        sectionKey,
+        (isStaged ? 'Staged Changes (' : 'Changes (') + changes.length + ')',
+        actions
+      )
+    );
+
+    if (state.sections[sectionKey] === false) {
       return section;
     }
 
     const tree = el('div');
     tree.setAttribute('role', 'tree');
 
-    if (active.changes.length === 0) {
-      tree.appendChild(el('div', 'empty', 'No changes.'));
+    if (changes.length === 0) {
+      tree.appendChild(el('div', 'empty', isStaged ? 'No staged changes.' : 'No changes.'));
       section.appendChild(tree);
       return section;
     }
 
-    // The repository root row, matching Visual Studio's "E:\path\to\repo" node.
-    const repoKey = '#repo';
+    // The repository root row, matching Visual Studio's full repository path.
+    const repoKey = prefix + '#repo';
     const repoOpen = state.expanded.has(repoKey);
     const repoRow = row('repo', 0, repoOpen, active.displayRoot, 'repo', null);
     repoRow.addEventListener('click', function () {
@@ -381,17 +437,18 @@
     tree.appendChild(repoRow);
 
     if (repoOpen) {
-      renderNodes(tree, active.tree, 1);
+      renderNodes(tree, nodes, 1, prefix);
     }
 
     section.appendChild(tree);
     return section;
   }
 
-  function renderNodes(container, nodes, depth) {
+  function renderNodes(container, nodes, depth, prefix) {
     for (const node of nodes) {
       if (node.kind === 'folder') {
-        const open = state.expanded.has(node.key);
+        const key = prefix + node.key;
+        const open = state.expanded.has(key);
         const folderRow = row(
           'folder',
           depth,
@@ -402,11 +459,11 @@
         );
         folderRow.title = node.label + ' \u2014 ' + node.fileCount + ' file(s)';
         folderRow.addEventListener('click', function () {
-          toggle(node.key, open);
+          toggle(key, open);
         });
         container.appendChild(folderRow);
         if (open) {
-          renderNodes(container, node.children, depth + 1);
+          renderNodes(container, node.children, depth + 1, prefix);
         }
       } else {
         container.appendChild(fileRow(node, depth));
@@ -464,13 +521,6 @@
 
     if (state.selected === change.path) {
       fileNode.classList.add('selected');
-    }
-
-    if (change.staged) {
-      const dot = el('span', 'staged-dot');
-      dot.appendChild(icon('circle-filled'));
-      dot.title = 'Staged';
-      fileNode.appendChild(dot);
     }
 
     const actions = el('div', 'row-actions');

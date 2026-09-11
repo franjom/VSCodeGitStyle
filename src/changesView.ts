@@ -1,14 +1,15 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { FileChange, Git, RepoSnapshot } from './git';
+import { Git, RepoSnapshot } from './git';
 import { ApiRepository, GitApi } from './gitExtension';
 import { buildTree, TreeNode } from './tree';
 
 interface ViewModel {
   repos: { root: string; name: string }[];
-  active?: Omit<RepoSnapshot, 'changes'> & {
-    changes: FileChange[];
-    tree: TreeNode[];
+  active?: RepoSnapshot & {
+    /** Trees for the two sections; kept apart so each expands independently. */
+    unstagedTree: TreeNode[];
+    stagedTree: TreeNode[];
     displayRoot: string;
   };
   separator: string;
@@ -21,7 +22,14 @@ type Inbound =
   | { type: 'setRepo'; root: string }
   | { type: 'checkout'; branch: string }
   | { type: 'remote'; op: 'fetch' | 'pull' | 'push' | 'sync' }
-  | { type: 'commit'; message: string; amend: boolean; mode: 'all' | 'staged' | 'allAndPush' | 'allAndSync' }
+  | {
+      type: 'commit';
+      message: string;
+      amend: boolean;
+      /** "all" stages everything first; "staged" commits the index as it is. */
+      mode: 'all' | 'staged';
+      after: 'none' | 'push' | 'sync';
+    }
   | { type: 'openChange'; path: string }
   | { type: 'stage'; paths: string[] }
   | { type: 'unstage'; paths: string[] }
@@ -147,7 +155,8 @@ export class ChangesViewProvider implements vscode.WebviewViewProvider {
         const snapshot = await this.git.snapshot(this.activeRoot, includeIgnored);
         model.active = {
           ...snapshot,
-          tree: buildTree(snapshot.changes, separator),
+          unstagedTree: buildTree(snapshot.unstaged, separator),
+          stagedTree: buildTree(snapshot.staged, separator),
           displayRoot: this.activeRoot,
         };
       } catch (err) {
@@ -264,16 +273,16 @@ export class ChangesViewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    if (message.mode !== 'staged') {
+    if (message.mode === 'all') {
       await this.git.stageAll(root);
     }
 
     await this.git.commit(root, text, message.amend);
     this.post({ type: 'committed' });
 
-    if (message.mode === 'allAndPush') {
+    if (message.after === 'push') {
       await this.runRemote('push', root);
-    } else if (message.mode === 'allAndSync') {
+    } else if (message.after === 'sync') {
       await this.runRemote('sync', root);
     }
   }
@@ -289,7 +298,11 @@ export class ChangesViewProvider implements vscode.WebviewViewProvider {
 
   private async discard(root: string, relPath: string): Promise<void> {
     const snapshot = await this.git.snapshot(root, false);
-    const change = snapshot.changes.find((c) => c.path === relPath);
+    // Prefer the worktree entry: discarding means reverting the file on disk,
+    // and for a file that is in both lists that is the one to act on.
+    const change =
+      snapshot.unstaged.find((c) => c.path === relPath) ??
+      snapshot.staged.find((c) => c.path === relPath);
     if (!change) {
       return;
     }

@@ -34,15 +34,23 @@ theme tokens so it follows the active colour theme.
 | "View all commits" link | done, opens the Git Repository window |
 | Commit message box, `Enter a message <Required>` | done, draft persisted across reloads |
 | AI message generation (sparkle button) | done, via the VS Code Language Model API when a provider exists |
-| `Commit All` split button (+ and Push / and Sync / Commit Staged) | done |
+| `Commit All` / `Commit Staged` split button | done; the primary action becomes `Commit Staged` as soon as anything is staged, with and Push / and Sync variants |
 | `Amend` checkbox | done |
 | `Changes (n)` tree: repo root, folders, files | done, single-child folder chains collapsed like VS |
+| `Staged Changes (n)` as its own section | done; appears only when something is staged, with its own tree and expansion state |
 | Per-file stage / unstage / discard / open changes | done, on hover and in the context menu |
 | Change-type colouring per file | done, using the theme's `gitDecoration` colours |
 | `Stashes (n)` list with `{ n } On <branch>: <message>` | done |
 | Stash apply / pop / drop, `Drop All` | done |
 | Multiple repositories in one workspace | first repository is shown; switching is not surfaced in the UI yet |
-| Separate Changes / Staged Changes groups | not done; one list, staged files carry a dot |
+
+### Why the two lists are read separately
+
+git's porcelain status carries two independent states per file: X is the index,
+Y is the worktree. A file that was edited, staged, then edited again is `MM` and
+genuinely belongs in both lists, so each column is read on its own instead of
+collapsing the file into a single entry with a flag. Such a file appears in both
+sections, offering Stage in one and Unstage in the other.
 
 ## Git Repository window (commit graph)
 
