@@ -700,7 +700,7 @@
     );
   }
 
-  const MAX_CHIPS = 3;
+  const MAX_CHIPS = 2;
 
   function refChips(commit) {
     const wrap = el('div', 'chips');

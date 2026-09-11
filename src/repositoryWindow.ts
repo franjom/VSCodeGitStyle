@@ -58,16 +58,18 @@ export class RepositoryWindow {
       void vscode.window.showWarningMessage('No Git repository is open.');
       return;
     }
-    RepositoryWindow.current = new RepositoryWindow(extensionUri, git, root);
+    RepositoryWindow.current = new RepositoryWindow(extensionUri, gitApi, git, root);
   }
 
   private readonly panel: vscode.WebviewPanel;
   private readonly disposables: vscode.Disposable[] = [];
   private scope: string | undefined;
   private limit = pageSize();
+  private loadTimer: NodeJS.Timeout | undefined;
 
   private constructor(
     private readonly extensionUri: vscode.Uri,
+    gitApi: GitApi,
     private readonly git: Git,
     private readonly root: string
   ) {
@@ -88,10 +90,47 @@ export class RepositoryWindow {
       this.panel.webview.onDidReceiveMessage((message: Inbound) => this.handle(message)),
       this.panel.onDidDispose(() => this.dispose())
     );
+
+    // Without this the window only reloads for its own actions, so a fetch or
+    // commit made anywhere else - the Git Changes view, a terminal, another
+    // editor - leaves the graph and the incoming/outgoing counts stale and
+    // disagreeing with the sidebar.
+    const repository = gitApi.repositories.find((r) => r.rootUri.fsPath === root);
+    if (repository) {
+      this.disposables.push(repository.state.onDidChange(() => this.scheduleLoad()));
+    }
+    this.disposables.push(
+      this.panel.onDidChangeViewState(() => {
+        if (this.panel.visible) {
+          this.scheduleLoad(100);
+        }
+      })
+    );
+  }
+
+  /**
+   * Repository state can fire repeatedly during a fetch, and a reload costs
+   * several git invocations, so coalesce them.
+   */
+  private scheduleLoad(delay = 400): void {
+    if (this.loadTimer) {
+      clearTimeout(this.loadTimer);
+    }
+    this.loadTimer = setTimeout(() => {
+      this.loadTimer = undefined;
+      if (this.panel.visible) {
+        void this.load().catch(() => {
+          /* surfaced by handle() for user-initiated loads */
+        });
+      }
+    }, delay);
   }
 
   private dispose(): void {
     RepositoryWindow.current = undefined;
+    if (this.loadTimer) {
+      clearTimeout(this.loadTimer);
+    }
     for (const disposable of this.disposables) {
       disposable.dispose();
     }

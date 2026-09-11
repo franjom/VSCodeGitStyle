@@ -7,7 +7,7 @@
   --vsg-row-height: 22px;
   --vsg-lane-width: 14px;
   --vsg-left-width: 260px;
-  --vsg-col-ref: 150px;
+  --vsg-col-ref: 186px;
   --vsg-col-graph: 60px;
   --vsg-col-author: 110px;
   --vsg-col-date: 130px;
@@ -320,13 +320,17 @@ body {
   gap: 3px;
   overflow: hidden;
   padding: 0 8px;
+  min-width: 0;
 }
 
 .chip {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  max-width: 100%;
+  /* Never shrink below a readable label: a squeezed row of chips collapses to
+     single letters ("m", "origin"). Extra chips are clipped by .chips instead. */
+  flex: 0 0 auto;
+  max-width: 120px;
   padding: 0 5px;
   height: 15px;
   border-radius: 7px;
@@ -340,6 +344,13 @@ body {
 
 .chip .codicon {
   font-size: 10px;
+  flex: 0 0 auto;
+}
+
+.chip > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .chip.current {

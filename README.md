@@ -63,7 +63,8 @@ A `WebviewPanel` in the editor area.
 | Message / Author / Date / ID columns | done |
 | Click to select, double-click for commit details | done, details open as a read-only diff document |
 | Context menu: details, copy ID, new branch here | done |
-| Paging | `Load more commits`, page size from `vsGitStyle.graphPageSize` (default 200) |
+| Paging | `Load more commits`, page size from `vsGitStyle.graphPageSize` (default 200); incoming commits get their own budget so a large fetch does not truncate Local History |
+| Stays current | reloads when the repository changes anywhere - the sidebar, a terminal, another editor - not only on its own actions |
 | Resizable columns | not done; the grid template is fixed except for the graph column |
 | Commit details side pane | not done; details open as an editor document instead |
 

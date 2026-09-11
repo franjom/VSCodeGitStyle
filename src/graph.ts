@@ -245,29 +245,36 @@ export async function readGraph(
 ): Promise<GraphModel> {
   const upstream = await upstreamOf(git, root, scope);
 
-  // Ask for one extra commit so we can tell whether a "Load more" row is needed.
-  const revs = upstream ? [scope, upstream] : [scope];
-  const out = await git.exec(root, [
-    'log',
-    '--date-order',
-    `--max-count=${limit + 1}`,
-    `--format=${LOG_FORMAT}`,
-    ...revs,
-    '--',
-  ]);
-
-  const commits = parseLog(out);
-  const hasMore = commits.length > limit;
-  if (hasMore) {
-    commits.length = limit;
-  }
-
   const [incomingSet, outgoingSet] = upstream
     ? await Promise.all([
         revList(git, root, [upstream, `^${scope}`]),
         revList(git, root, [scope, `^${upstream}`]),
       ])
     : [new Set<string>(), new Set<string>()];
+
+  // The log covers the scope and its upstream together, so a big fetch would
+  // otherwise spend the whole page on incoming commits and leave Local History
+  // looking truncated. Give the incoming commits their own budget on top, with
+  // a ceiling so a wildly stale branch cannot blow the page up.
+  const incomingBudget = Math.min(incomingSet.size, 2000);
+  const requested = limit + incomingBudget;
+
+  // Ask for one extra commit so we can tell whether a "Load more" row is needed.
+  const revs = upstream ? [scope, upstream] : [scope];
+  const out = await git.exec(root, [
+    'log',
+    '--date-order',
+    `--max-count=${requested + 1}`,
+    `--format=${LOG_FORMAT}`,
+    ...revs,
+    '--',
+  ]);
+
+  const commits = parseLog(out);
+  const hasMore = commits.length > requested;
+  if (hasMore) {
+    commits.length = requested;
+  }
 
   const headHash = (await git.exec(root, ['rev-parse', 'HEAD'])).trim();
 
