@@ -310,6 +310,15 @@
     if (model.graph.upstream) {
       bar.appendChild(el('span', null, '→ ' + model.graph.upstream));
     }
+    // One file's history: say which file, and give a way back to the branch.
+    if (model.graph.file) {
+      const chip = el('span', 'file-scope');
+      chip.appendChild(icon('history'));
+      chip.appendChild(el('span', null, 'History of ' + model.graph.file));
+      chip.title = model.graph.file;
+      bar.appendChild(chip);
+      bar.appendChild(link('Show all commits', function () { post({ type: 'clearFile' }); }));
+    }
     return bar;
   }
 

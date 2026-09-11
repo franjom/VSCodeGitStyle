@@ -36,6 +36,7 @@ type Inbound =
   | { type: 'ready' }
   | { type: 'refresh' }
   | { type: 'setScope'; scope: string }
+  | { type: 'clearFile' }
   | { type: 'loadMore' }
   | { type: 'remote'; op: 'fetch' | 'pull' | 'push' | 'sync' }
   | { type: 'checkout'; ref: string }
@@ -58,9 +59,17 @@ type Inbound =
 export class RepositoryWindow {
   private static current: RepositoryWindow | undefined;
 
-  static show(extensionUri: vscode.Uri, gitApi: GitApi, git: Git): void {
+  /**
+   * `file` scopes the history to one path, the way Visual Studio's "View
+   * History" does. Passing it to an already-open window re-scopes that one
+   * rather than opening a second.
+   */
+  static show(extensionUri: vscode.Uri, gitApi: GitApi, git: Git, file?: string): void {
     if (RepositoryWindow.current) {
       RepositoryWindow.current.panel.reveal();
+      if (file) {
+        void RepositoryWindow.current.showFile(file);
+      }
       return;
     }
     const root = gitApi.repositories[0]?.rootUri.fsPath;
@@ -68,12 +77,21 @@ export class RepositoryWindow {
       void vscode.window.showWarningMessage('No Git repository is open.');
       return;
     }
-    RepositoryWindow.current = new RepositoryWindow(extensionUri, gitApi, git, root);
+    RepositoryWindow.current = new RepositoryWindow(extensionUri, gitApi, git, root, file);
+  }
+
+  /** Re-scopes an open window to one file's history. */
+  private async showFile(file: string): Promise<void> {
+    this.file = file;
+    this.limit = pageSize();
+    await this.load();
   }
 
   private readonly panel: vscode.WebviewPanel;
   private readonly disposables: vscode.Disposable[] = [];
   private scope: string | undefined;
+  /** Repo-relative path when the window is showing one file's history. */
+  private file: string | undefined;
   private limit = pageSize();
   private loadTimer: NodeJS.Timeout | undefined;
 
@@ -81,8 +99,10 @@ export class RepositoryWindow {
     private readonly extensionUri: vscode.Uri,
     gitApi: GitApi,
     private readonly git: Git,
-    private readonly root: string
+    private readonly root: string,
+    file?: string
   ) {
+    this.file = file;
     this.panel = vscode.window.createWebviewPanel(
       'vsGitStyle.repository',
       `Git Repository - ${path.basename(root)}`,
@@ -158,6 +178,14 @@ export class RepositoryWindow {
 
         case 'setScope':
           this.scope = message.scope;
+          // Picking a branch means leaving one file's history behind.
+          this.file = undefined;
+          this.limit = pageSize();
+          await this.load();
+          return;
+
+        case 'clearFile':
+          this.file = undefined;
           this.limit = pageSize();
           await this.load();
           return;
@@ -219,7 +247,7 @@ export class RepositoryWindow {
     if (!this.scope || !refs.some((r) => r.short === this.scope)) {
       this.scope = refs.find((r) => r.current)?.short ?? 'HEAD';
     }
-    const graph = await readGraph(this.git, this.root, this.scope, this.limit);
+    const graph = await readGraph(this.git, this.root, this.scope, this.limit, this.file);
     const configured = vscode.workspace
       .getConfiguration('vsGitStyle')
       .get<ReviewProvider | 'auto'>('reviewProvider', 'auto');

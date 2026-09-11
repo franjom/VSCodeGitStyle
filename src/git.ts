@@ -1,4 +1,5 @@
 import { execFile } from 'child_process';
+import { promises as fs } from 'fs';
 import * as path from 'path';
 
 export type ChangeStatus =
@@ -286,6 +287,47 @@ export class Git {
       await this.exec(root, ['reset', '-q', 'HEAD', '--', change.path]);
     }
     await this.exec(root, ['checkout', '-q', '--', change.path]);
+  }
+
+  /**
+   * Visual Studio's "Ignore and Untrack item": add the file to .gitignore and
+   * drop it from the index, leaving it on disk.
+   *
+   * The two halves are independent. An untracked file has nothing to untrack -
+   * `git rm --cached` fails outright with "pathspec did not match any files" -
+   * and a file already covered by .gitignore still needs removing from the
+   * index, because a tracked file goes on being tracked whatever .gitignore
+   * says. So each half is decided on its own.
+   */
+  async ignoreAndUntrack(root: string, relPath: string): Promise<void> {
+    const tracked = (await this.tryExec(root, ['ls-files', '--', relPath]))?.trim();
+    if (tracked) {
+      await this.exec(root, ['rm', '--cached', '-q', '--', relPath]);
+    }
+    await this.addToGitignore(root, relPath);
+  }
+
+  /**
+   * Appends one anchored pattern to the repository's .gitignore. The leading
+   * slash matters: without it `foo/bar.cs` would also ignore that name anywhere
+   * deeper in the tree, which is not what "ignore this item" means.
+   */
+  private async addToGitignore(root: string, relPath: string): Promise<void> {
+    const file = path.join(root, '.gitignore');
+    const pattern = `/${relPath}`;
+    let existing = '';
+    try {
+      existing = await fs.readFile(file, 'utf8');
+    } catch {
+      // No .gitignore yet; it is written below.
+    }
+    if (existing.split(/\r?\n/).some((line) => line.trim() === pattern)) {
+      return;
+    }
+    // A file that does not end in a newline would otherwise have the new
+    // pattern run onto the end of its last line.
+    const separator = existing === '' || existing.endsWith('\n') ? '' : '\n';
+    await fs.writeFile(file, `${existing}${separator}${pattern}\n`, 'utf8');
   }
 
   commit(root: string, message: string, amend: boolean): Promise<string> {

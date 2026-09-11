@@ -45,6 +45,7 @@ theme tokens so it follows the active colour theme.
 | Resolve a conflict | done: open in VS Code's merge editor, take current, take incoming, or mark resolved |
 | In-progress operation banner | done, naming what is being merged, with an Abort link |
 | Per-file stage / unstage / discard / open changes | done, on hover and in the context menu |
+| Per-file context menu | done, matching Visual Studio's: Open, Stage/Unstage, Undo Changes, View History, Compare with Unmodified, Blame (Annotate), Ignore and Untrack item. "Review changes with Copilot" is deliberately left out |
 | Change-type colouring per file | done, using the theme's `gitDecoration` colours |
 | `Stashes (n)` list with `{ n } On <branch>: <message>` | done |
 | Stash apply / pop / drop, `Drop All` | done |
@@ -80,6 +81,7 @@ A `WebviewPanel` in the editor area.
 | Toolbar: Refresh / Fetch / Pull / Push / Sync | done |
 | `Filter History` box | done, filters on subject, author and hash |
 | `Branch / Tag: <name>` breadcrumb | done |
+| History of one file | done, from the sidebar's "View History"; `git log --follow` so the history survives a rename, with the file named in the breadcrumb and a "Show all commits" link back. Incoming/Outgoing is not split in this mode, because those counts are about the branch, not the file |
 | Branches / Tags pane, nested on `/` | done, with a pane filter and a draggable splitter |
 | `remotes/<remote>` and `tags` nodes | done |
 | `Pull Requests` node | placeholder; labelled `Merge Requests` for GitLab, see `vsGitStyle.reviewProvider` |
@@ -183,7 +185,7 @@ so VS Code's credential plumbing stays in play.
 ## Tests
 
 `npm test` compiles and runs the suite with node's built-in runner - no test
-framework, no dependencies. 65 tests in [tests/](tests/):
+framework, no dependencies. 75 tests in [tests/](tests/):
 
 - **[tests/parse.test.js](tests/parse.test.js)** - the porcelain v2 parser, the
   log and name-status parsers, and remote URL handling. Table-driven, no git
@@ -202,6 +204,11 @@ framework, no dependencies. 65 tests in [tests/](tests/):
   invariants rather than cases - that the hidden rows above, the rendered ones
   and the hidden rows below always add up to the whole list, and that walking the
   viewport down the list a row at a time never skips one.
+- **[tests/menu.test.js](tests/menu.test.js)** - the file context menu's two
+  git-facing actions, against real repositories: ignore-and-untrack (including a
+  file that was never tracked, where `git rm --cached` fails outright, a
+  .gitignore with no trailing newline, and a repeated ignore) and file-scoped
+  history (only the commits that touched the file, followed through a rename).
 - **[tests/repo.test.js](tests/repo.test.js)** - real repositories built in the
   temp directory and thrown away: every change type at once, ahead/behind
   against an upstream, stashes, a conflicted merge and its resolution, abort,

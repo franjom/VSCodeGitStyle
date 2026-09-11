@@ -38,6 +38,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('vsGitStyle.refresh', () => provider.scheduleRefresh(0)),
     vscode.commands.registerCommand('vsGitStyle.openRepositoryWindow', () =>
       RepositoryWindow.show(context.extensionUri, api, git)
+    ),
+    vscode.commands.registerCommand('vsGitStyle.viewFileHistory', (file?: string) =>
+      RepositoryWindow.show(context.extensionUri, api, git, file)
     )
   );
 

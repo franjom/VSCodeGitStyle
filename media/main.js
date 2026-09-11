@@ -90,7 +90,11 @@
         menuEl.appendChild(el('div', 'separator'));
         continue;
       }
-      const row = el('div', 'item', item.label);
+      const row = el('div', 'item');
+      // Visual Studio's menus lead with an icon column, and the entries without
+      // one still line up with it, so the slot is always there.
+      row.appendChild(item.icon ? icon(item.icon, 'menu-icon') : el('span', 'menu-icon'));
+      row.appendChild(el('span', null, item.label));
       row.addEventListener('click', function () {
         hideMenu();
         item.run();
@@ -862,18 +866,49 @@
         ]);
         return;
       }
+      // Ordered and grouped as Visual Studio's own file context menu is.
       showMenu(event, [
         {
-          label: 'Open Changes',
-          run: function () { post({ type: 'openChange', path: change.path }); },
+          icon: 'go-to-file',
+          label: 'Open',
+          run: function () { post({ type: 'openFile', path: change.path }); },
+        },
+        change.staged
+          ? {
+              icon: 'remove',
+              label: 'Unstage',
+              run: function () { post({ type: 'unstage', paths: [change.path] }); },
+            }
+          : {
+              icon: 'add',
+              label: 'Stage',
+              run: function () { post({ type: 'stage', paths: [change.path] }); },
+            },
+        {
+          icon: 'discard',
+          label: 'Undo Changes\u2026',
+          run: function () { post({ type: 'discard', path: change.path }); },
         },
         '-',
-        change.staged
-          ? { label: 'Unstage', run: function () { post({ type: 'unstage', paths: [change.path] }); } }
-          : { label: 'Stage', run: function () { post({ type: 'stage', paths: [change.path] }); } },
         {
-          label: 'Discard Changes\u2026',
-          run: function () { post({ type: 'discard', path: change.path }); },
+          icon: 'history',
+          label: 'View History',
+          run: function () { post({ type: 'viewHistory', path: change.path }); },
+        },
+        {
+          icon: 'git-compare',
+          label: 'Compare with Unmodified\u2026',
+          run: function () { post({ type: 'openChange', path: change.path }); },
+        },
+        {
+          icon: 'account',
+          label: 'Blame (Annotate)',
+          run: function () { post({ type: 'blame', path: change.path }); },
+        },
+        '-',
+        {
+          label: 'Ignore and Untrack item',
+          run: function () { post({ type: 'ignoreAndUntrack', path: change.path }); },
         },
       ]);
     });

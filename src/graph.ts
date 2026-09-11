@@ -58,6 +58,8 @@ export interface GraphModel {
   hasMore: boolean;
   scope: string;
   upstream?: string;
+  /** Set when the history is scoped to one file, for the breadcrumb. */
+  file?: string;
 }
 
 export interface RefEntry {
@@ -363,16 +365,21 @@ export async function readGraph(
   git: Git,
   root: string,
   scope: string,
-  limit: number
+  limit: number,
+  file?: string
 ): Promise<GraphModel> {
   const upstream = await upstreamOf(git, root, scope);
 
-  const [incomingSet, outgoingSet] = upstream
-    ? await Promise.all([
-        revList(git, root, [upstream, `^${scope}`]),
-        revList(git, root, [scope, `^${upstream}`]),
-      ])
-    : [new Set<string>(), new Set<string>()];
+  // One file's history is about the file, not about how the branch stands
+  // against its upstream: splitting it into Incoming and Local History would
+  // count commits that never touched the file. Everything is Local History.
+  const [incomingSet, outgoingSet] =
+    upstream && !file
+      ? await Promise.all([
+          revList(git, root, [upstream, `^${scope}`]),
+          revList(git, root, [scope, `^${upstream}`]),
+        ])
+      : [new Set<string>(), new Set<string>()];
 
   // The log covers the scope and its upstream together, so a big fetch would
   // otherwise spend the whole page on incoming commits and leave Local History
@@ -382,14 +389,19 @@ export async function readGraph(
   const requested = limit + incomingBudget;
 
   // Ask for one extra commit so we can tell whether a "Load more" row is needed.
-  const revs = upstream ? [scope, upstream] : [scope];
+  const revs = upstream && !file ? [scope, upstream] : [scope];
   const out = await git.exec(root, [
     'log',
     '--date-order',
     `--max-count=${requested + 1}`,
     `--format=${LOG_FORMAT}`,
+    // --follow carries the history through renames, which is the point of
+    // asking for one file's history. It takes exactly one path, and the path
+    // has to come after the --, or git reads it as a revision.
+    ...(file ? ['--follow'] : []),
     ...revs,
     '--',
+    ...(file ? [file] : []),
   ]);
 
   const commits = parseLog(out);
@@ -407,6 +419,7 @@ export async function readGraph(
     hasMore,
     scope,
     upstream,
+    file,
   };
 }
 

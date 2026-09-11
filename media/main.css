@@ -510,9 +510,22 @@ body {
 }
 
 .context-menu .item {
-  padding: 4px 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 14px 4px 8px;
   cursor: pointer;
   white-space: nowrap;
+}
+
+/* Always present, with or without an icon, so the labels line up in a column
+   the way Visual Studio's menus do. */
+.context-menu .menu-icon {
+  flex: 0 0 16px;
+  width: 16px;
+  font-size: 14px;
+  text-align: center;
+  opacity: 0.85;
 }
 
 .context-menu .item:hover {

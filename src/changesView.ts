@@ -4,6 +4,9 @@ import { Git, RepoSnapshot } from './git';
 import { ApiRepository, GitApi } from './gitExtension';
 import { buildTree, TreeNode } from './tree';
 
+/** VS Code's own git blame toggle, present from 1.96. */
+const BLAME_COMMAND = 'git.blame.toggleEditorDecoration';
+
 interface ViewModel {
   repos: { root: string; name: string }[];
   active?: RepoSnapshot & {
@@ -34,6 +37,10 @@ type Inbound =
   | { type: 'openChange'; path: string }
   | { type: 'stage'; paths: string[] }
   | { type: 'unstage'; paths: string[] }
+  | { type: 'openFile'; path: string }
+  | { type: 'viewHistory'; path: string }
+  | { type: 'blame'; path: string }
+  | { type: 'ignoreAndUntrack'; path: string }
   | { type: 'discard'; path: string }
   | { type: 'discardFolder'; path: string }
   | { type: 'resolveConflict'; path: string; side: 'ours' | 'theirs' }
@@ -229,6 +236,25 @@ export class ChangesViewProvider implements vscode.WebviewViewProvider {
           await this.openChange(root, message.path);
           break;
 
+        case 'openFile':
+          await vscode.window.showTextDocument(
+            vscode.Uri.file(path.join(root, message.path)),
+            { preview: true }
+          );
+          break;
+
+        case 'viewHistory':
+          await vscode.commands.executeCommand('vsGitStyle.viewFileHistory', message.path);
+          break;
+
+        case 'blame':
+          await this.blame(root, message.path);
+          break;
+
+        case 'ignoreAndUntrack':
+          await this.ignoreAndUntrack(root, message.path);
+          break;
+
         case 'stage':
           await this.git.stage(root, message.paths);
           break;
@@ -321,6 +347,56 @@ export class ChangesViewProvider implements vscode.WebviewViewProvider {
     } catch {
       await vscode.window.showTextDocument(uri, { preview: true });
     }
+  }
+
+  /**
+   * Visual Studio's "Blame (Annotate)". VS Code grew its own git blame in 1.96,
+   * so the file is opened and that is switched on rather than a blame view of
+   * our own being built. The command is a toggle, so a blame already showing
+   * would otherwise be turned off by asking for it.
+   */
+  private async blame(root: string, relPath: string): Promise<void> {
+    await vscode.window.showTextDocument(vscode.Uri.file(path.join(root, relPath)), {
+      preview: true,
+    });
+
+    const enabled = vscode.workspace
+      .getConfiguration('git')
+      .get<boolean>('blame.editorDecoration.enabled', false);
+    if (enabled) {
+      return;
+    }
+
+    const commands = await vscode.commands.getCommands(true);
+    if (!commands.includes(BLAME_COMMAND)) {
+      void vscode.window.showInformationMessage(
+        'This version of VS Code has no built-in git blame. Update VS Code, or install a blame extension.'
+      );
+      return;
+    }
+    await vscode.commands.executeCommand(BLAME_COMMAND);
+  }
+
+  /**
+   * Visual Studio's "Ignore and Untrack item". Both halves are destructive in
+   * their own way - the file stops being tracked, and .gitignore gains a line -
+   * so it is confirmed first, the same as discarding.
+   */
+  private async ignoreAndUntrack(root: string, relPath: string): Promise<void> {
+    const choice = await vscode.window.showWarningMessage(
+      `Ignore and untrack ${path.basename(relPath)}?`,
+      {
+        modal: true,
+        detail:
+          `${relPath} will be added to .gitignore and removed from source control. ` +
+          'The file itself stays on disk.',
+      },
+      'Ignore and Untrack'
+    );
+    if (choice !== 'Ignore and Untrack') {
+      return;
+    }
+    await this.git.ignoreAndUntrack(root, relPath);
   }
 
   private async discard(root: string, relPath: string): Promise<void> {

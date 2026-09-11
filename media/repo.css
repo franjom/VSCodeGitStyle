@@ -159,6 +159,24 @@ body {
   font-weight: 600;
 }
 
+/* The file the history is scoped to. A long path is squeezed rather than
+   allowed to push "Show all commits" off the end of the bar. */
+.breadcrumb .file-scope {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding-left: 6px;
+  border-left: 1px solid var(--vsg-border);
+  color: var(--vscode-foreground, #cccccc);
+}
+
+.breadcrumb .file-scope > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* -------------------------------------------------------------------- body */
 
 .body {
