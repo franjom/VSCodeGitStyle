@@ -329,6 +329,54 @@ function collapseLocalGroup() {
   });
 }
 
+/**
+ * Drags the details splitter, selects a commit, then drags again. Selecting
+ * replaces the whole details pane, and a splitter holding the old element goes
+ * on resizing a detached node - the drag looks dead until the next full render.
+ */
+function dragSplitterAroundSelection() {
+  const rows = document.querySelector('.rows');
+  const splitter = [...document.querySelectorAll('.splitter')].pop();
+  const widthNow = function () {
+    return Math.round(document.querySelector('.details').getBoundingClientRect().width);
+  };
+
+  const drag = function (by) {
+    const box = splitter.getBoundingClientRect();
+    const x = box.left + box.width / 2;
+    const y = box.top + box.height / 2;
+    splitter.dispatchEvent(
+      new MouseEvent('mousedown', { bubbles: true, clientX: x, clientY: y })
+    );
+    document.dispatchEvent(
+      new MouseEvent('mousemove', { bubbles: true, clientX: x - by, clientY: y })
+    );
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: x - by, clientY: y }));
+    return settle();
+  };
+
+  const before = widthNow();
+  return drag(60).then(function () {
+    const afterFirst = widthNow();
+    // Select a commit, which rebuilds the details pane.
+    const row = rows.querySelector('.commit-row');
+    row.click();
+    return settle()
+      .then(settle)
+      .then(function () {
+        const afterSelect = widthNow();
+        return drag(60).then(function () {
+          return {
+            before: before,
+            afterFirst: afterFirst,
+            afterSelect: afterSelect,
+            afterSecond: widthNow(),
+          };
+        });
+      });
+  });
+}
+
 function timeRender() {
   // The harness renders the whole window from a 'model' message, which is what
   // the extension does on every refresh, so this is the cost being measured.
@@ -632,6 +680,18 @@ async function main() {
           return s.toLowerCase().indexOf('widget settings') !== -1;
         }),
       filtered.subjects.slice(0, 3).join(' / ')
+    );
+
+    const drag = await evaluate(cdp, dragSplitterAroundSelection);
+    check(
+      'the details splitter resizes the pane',
+      drag.afterFirst > drag.before + 20,
+      drag.before + 'px then ' + drag.afterFirst + 'px'
+    );
+    check(
+      'the splitter still works after a commit is selected',
+      drag.afterSecond > drag.afterSelect + 20,
+      drag.afterSelect + 'px then ' + drag.afterSecond + 'px (selecting replaces the pane)'
     );
 
     const cleared = await evaluate(cdp, applyFilter, '');

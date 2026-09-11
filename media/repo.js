@@ -246,12 +246,12 @@
     const left = renderLeft();
     left.style.flexBasis = state.leftWidth + 'px';
     body.appendChild(left);
-    body.appendChild(renderSplitter(left, 'left'));
+    body.appendChild(renderSplitter('.left', 'left'));
     body.appendChild(renderRight());
     if (state.detailsVisible) {
       const details = renderDetails();
       details.style.flexBasis = state.detailsWidth + 'px';
-      body.appendChild(renderSplitter(details, 'right'));
+      body.appendChild(renderSplitter('.details', 'right'));
       body.appendChild(details);
     }
     root.appendChild(body);
@@ -328,12 +328,16 @@
    * go on resizing a node that is no longer in the document - the drag simply
    * stopped working until the next full render.
    */
-  function renderSplitter(pane, side) {
+  function renderSplitter(selector, side) {
     const splitter = el('div', 'splitter');
     splitter.addEventListener('mousedown', function (event) {
       event.preventDefault();
       splitter.classList.add('dragging');
       const startX = event.clientX;
+      const pane = root.querySelector(selector);
+      if (!pane) {
+        return;
+      }
       const startWidth = pane.getBoundingClientRect().width;
 
       function move(e) {
@@ -346,7 +350,11 @@
         } else {
           state.leftWidth = next;
         }
-        pane.style.flexBasis = next + 'px';
+        // Resolved on every move, so a pane replaced mid-drag is still sized.
+        const current = root.querySelector(selector);
+        if (current) {
+          current.style.flexBasis = next + 'px';
+        }
       }
       function up() {
         splitter.classList.remove('dragging');
