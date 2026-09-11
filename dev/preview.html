@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<!--
+  Dev harness. Opens media/main.js + media/main.css in a plain browser with a
+  stubbed VS Code webview API and a fake repository model, so the look of the
+  panel can be iterated on without launching an Extension Development Host.
+  Not shipped as part of the extension's runtime.
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Git Changes - preview</title>
+<link href="../media/codicon.css" rel="stylesheet">
+<link href="../media/main.css" rel="stylesheet">
+<style>
+  /* Approximation of VS Code's Dark Modern tokens. */
+  :root {
+    --vscode-font-family: "Segoe UI", system-ui, sans-serif;
+    --vscode-font-size: 13px;
+    --vscode-foreground: #cccccc;
+    --vscode-sideBar-background: #181818;
+    --vscode-sideBar-foreground: #cccccc;
+    --vscode-editor-background: #1f1f1f;
+    --vscode-panel-border: #2b2b2b;
+    --vscode-descriptionForeground: #9d9d9d;
+    --vscode-input-background: #313131;
+    --vscode-input-foreground: #cccccc;
+    --vscode-input-border: #3c3c3c;
+    --vscode-input-placeholderForeground: #989898;
+    --vscode-dropdown-border: #3c3c3c;
+    --vscode-focusBorder: #0078d4;
+    --vscode-textLink-foreground: #4daafc;
+    --vscode-textLink-activeForeground: #6cb8ff;
+    --vscode-list-hoverBackground: #2a2d2e;
+    --vscode-list-activeSelectionBackground: #04395e;
+    --vscode-list-activeSelectionForeground: #ffffff;
+    --vscode-button-secondaryBackground: #313131;
+    --vscode-button-secondaryForeground: #cccccc;
+    --vscode-button-secondaryHoverBackground: #3c3c3c;
+    --vscode-button-border: #3c3c3c;
+    --vscode-progressBar-background: #0078d4;
+    --vscode-menu-background: #1f1f1f;
+    --vscode-menu-foreground: #cccccc;
+    --vscode-menu-border: #454545;
+    --vscode-menu-selectionBackground: #04395e;
+    --vscode-menu-selectionForeground: #ffffff;
+    --vscode-menu-separatorBackground: #454545;
+    --vscode-gitDecoration-addedResourceForeground: #81b88b;
+    --vscode-gitDecoration-modifiedResourceForeground: #e2c08d;
+    --vscode-gitDecoration-deletedResourceForeground: #c74e39;
+    --vscode-gitDecoration-renamedResourceForeground: #73c991;
+    --vscode-gitDecoration-untrackedResourceForeground: #81b88b;
+    --vscode-gitDecoration-conflictingResourceForeground: #e4676b;
+    --vscode-gitDecoration-ignoredResourceForeground: #8c8c8c;
+    --vscode-symbolIcon-folderForeground: #dcb67a;
+    --vscode-symbolIcon-namespaceForeground: #c5c5c5;
+  }
+
+  /* Fake the surrounding VS Code sidebar so proportions read correctly. */
+  body {
+    background: #101010;
+    display: flex;
+    justify-content: flex-start;
+  }
+
+  #frame {
+    width: 380px;
+    height: 100vh;
+    border-right: 1px solid #2b2b2b;
+    display: flex;
+    flex-direction: column;
+    background: var(--vscode-sideBar-background);
+  }
+
+  #frame .title {
+    flex: 0 0 auto;
+    height: 35px;
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
+    font: 11px var(--vscode-font-family);
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+    color: #cccccc;
+  }
+
+  #frame .host {
+    flex: 1 1 auto;
+    min-height: 0;
+    position: relative;
+  }
+
+  #frame .host > .shell {
+    height: 100%;
+  }
+</style>
+</head>
+<body>
+<div id="frame">
+  <div class="title">Git Changes</div>
+  <div class="host">
+    <div id="root" class="shell"></div>
+  </div>
+</div>
+<div id="menu" class="context-menu" hidden></div>
+
+<script src="./preview-model.js"></script>
+<script>
+  // Stub of the webview host API, installed before main.js runs.
+  let stored = {};
+  window.acquireVsCodeApi = function () {
+    return {
+      getState: function () { return stored; },
+      setState: function (next) { stored = next; },
+      postMessage: function (message) {
+        console.log('[preview] postMessage', message);
+        if (message.type === 'ready' || message.type === 'refresh') {
+          window.dispatchEvent(
+            new MessageEvent('message', { data: { type: 'model', model: window.__VSG_MODEL } })
+          );
+        }
+      },
+    };
+  };
+</script>
+<script src="../media/main.js"></script>
+</body>
+</html>

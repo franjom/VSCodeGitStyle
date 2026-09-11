@@ -1,0 +1,93 @@
+{
+  "name": "vs-git-style",
+  "displayName": "VS Git Style",
+  "description": "Visual Studio 2026 style Git Changes panel for VS Code.",
+  "version": "0.0.1",
+  "publisher": "local",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "SCM Providers"
+  ],
+  "extensionDependencies": [
+    "vscode.git"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "vsGitStyle",
+          "title": "Git Changes",
+          "icon": "media/activity-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "vsGitStyle": [
+        {
+          "type": "webview",
+          "id": "vsGitStyle.changes",
+          "name": "Git Changes",
+          "visibility": "visible"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "vsGitStyle.refresh",
+        "title": "Refresh",
+        "category": "VS Git Style",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "vsGitStyle.openRepositoryWindow",
+        "title": "Open Git Repository Window",
+        "category": "VS Git Style"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "vsGitStyle.refresh",
+          "when": "view == vsGitStyle.changes",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "VS Git Style",
+      "properties": {
+        "vsGitStyle.confirmDiscard": {
+          "type": "boolean",
+          "default": true,
+          "description": "Ask for confirmation before discarding changes to a file."
+        },
+        "vsGitStyle.showIgnoredFiles": {
+          "type": "boolean",
+          "default": false,
+          "description": "Include ignored files in the Changes tree."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.5.4"
+  },
+  "dependencies": {
+    "@vscode/codicons": "^0.0.36"
+  }
+}
