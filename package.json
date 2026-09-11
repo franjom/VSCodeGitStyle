@@ -106,6 +106,7 @@
   "scripts": {
     "compile": "tsc -p ./",
     "mutation-check": "node tools/mutation-check.js",
+    "preview-check": "node tools/preview-check.js",
     "package": "vsce package --no-dependencies --baseContentUrl https://local.invalid/vs-git-style --baseImagesUrl https://local.invalid/vs-git-style --out vs-git-style.vsix",
     "test": "npm run compile && node --test",
     "test:only": "node --test",

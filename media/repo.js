@@ -11,6 +11,12 @@
   const LANE_W = 14;
   const LANE_COLORS = 8;
 
+  // Rows kept in the DOM beyond each edge of the viewport, so a small scroll is
+  // already covered by the time the next frame runs.
+  const OVERSCAN = 8;
+
+  const visibleRange = self.VsgVirtual.visibleRange;
+
   const persisted = vscode.getState() || {};
 
   const state = {
@@ -28,6 +34,9 @@
     detailsError: null,
     detailsLoading: false,
   };
+
+  // The row regions currently on screen, rebuilt with the rows themselves.
+  let windows = [];
 
   function save() {
     vscode.setState({
@@ -251,6 +260,9 @@
     if (newScroller) {
       newScroller.scrollTop = scrollTop;
     }
+    // Only now is the pane laid out, which is what the row windows measure
+    // themselves against.
+    syncWindows();
 
     installKeyboardNavigation(root);
   }
@@ -301,6 +313,12 @@
     return bar;
   }
 
+  /**
+   * `selector` rather than the element itself: selecting a commit replaces the
+   * whole details pane, and a splitter holding a reference to the old one would
+   * go on resizing a node that is no longer in the document - the drag simply
+   * stopped working until the next full render.
+   */
   function renderSplitter(pane, side) {
     const splitter = el('div', 'splitter');
     splitter.addEventListener('mousedown', function (event) {
@@ -623,6 +641,12 @@
 
     const rows = el('div', 'rows');
     rows.setAttribute('role', 'table');
+    rows.addEventListener('scroll', queueSync);
+    if (rowsObserver) {
+      // The previous scroller is gone with the rest of the render.
+      rowsObserver.disconnect();
+      rowsObserver.observe(rows);
+    }
     pane.appendChild(rows);
     fillRows(rows);
     return pane;
@@ -634,8 +658,14 @@
       render();
       return;
     }
+    // Emptying the container collapses its height, which drags the scroll
+    // position to the top with it, so put it back once the windows are sized
+    // for the whole list again.
+    const scrollTop = rows.scrollTop;
     rows.textContent = '';
     fillRows(rows);
+    rows.scrollTop = scrollTop;
+    syncWindows();
   }
 
   function matches(row) {
@@ -651,8 +681,86 @@
     );
   }
 
+  /**
+   * A region of commit rows of which only the visible slice is in the DOM. The
+   * rows scrolled out of sight are replaced by padding of exactly their height,
+   * so the scrollbar, and every offset below the region, stay where the whole
+   * list would have put them.
+   */
+  function rowWindow(rows, maxLanes) {
+    const host = el('div', 'row-window');
+    host.setAttribute('role', 'rowgroup');
+    // Sized for the full list before a single row exists, so that the first
+    // measurement of a region below this one already lands in the right place.
+    host.style.paddingBottom = rows.length * ROW_H + 'px';
+    windows.push({ host: host, rows: rows, maxLanes: maxLanes, start: -1, end: -1 });
+    return host;
+  }
+
+  function syncWindows() {
+    const scroller = root.querySelector('.rows');
+    if (!scroller || windows.length === 0) {
+      return;
+    }
+    const scrollerTop = scroller.getBoundingClientRect().top;
+    const scrollTop = scroller.scrollTop;
+    const viewportHeight = scroller.clientHeight;
+
+    for (const region of windows) {
+      // Measured rather than computed: group headers, their borders and the
+      // empty-state placeholders all sit between the regions. A region's own
+      // height never changes, so this stays correct as the windows fill in.
+      const offset = region.host.getBoundingClientRect().top - scrollerTop + scrollTop;
+      const range = visibleRange({
+        total: region.rows.length,
+        rowHeight: ROW_H,
+        overscan: OVERSCAN,
+        offset: offset,
+        scrollTop: scrollTop,
+        viewportHeight: viewportHeight,
+      });
+      if (range.start === region.start && range.end === region.end) {
+        continue;
+      }
+      region.start = range.start;
+      region.end = range.end;
+      region.host.textContent = '';
+      region.host.style.paddingTop = range.start * ROW_H + 'px';
+      region.host.style.paddingBottom = (region.rows.length - range.end) * ROW_H + 'px';
+      for (let i = range.start; i < range.end; i++) {
+        region.host.appendChild(commitRow(region.rows[i], region.maxLanes));
+      }
+    }
+  }
+
+  let syncQueued = false;
+
+  // Scrolling fires far more often than the screen is painted; one sync per
+  // frame is enough, and each one is a no-op unless the range actually moved.
+  function queueSync() {
+    if (syncQueued) {
+      return;
+    }
+    syncQueued = true;
+    requestAnimationFrame(function () {
+      syncQueued = false;
+      syncWindows();
+    });
+  }
+
+  // How many rows are needed follows the height of the scroller, which changes
+  // for more reasons than the window being resized: the icon font arriving
+  // retags the toolbar's height, the splitters move the panes about, and a
+  // webview that was hidden when it first rendered measures nothing at all
+  // until it is shown. Watching the element itself covers every one of them.
+  const rowsObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(queueSync) : null;
+  if (!rowsObserver) {
+    window.addEventListener('resize', queueSync);
+  }
+
   function fillRows(container) {
     const graph = state.model.graph;
+    windows = [];
     const visible = graph.rows.filter(matches);
     const incoming = visible.filter(function (r) { return r.group === 'incoming'; });
     const local = visible.filter(function (r) { return r.group === 'local'; });
@@ -668,9 +776,7 @@
       if (incoming.length === 0) {
         container.appendChild(el('div', 'empty', 'Nothing incoming.'));
       } else {
-        incoming.forEach(function (row) {
-          container.appendChild(commitRow(row, graph.maxLanes));
-        });
+        container.appendChild(rowWindow(incoming, graph.maxLanes));
       }
     }
 
@@ -689,9 +795,7 @@
       if (local.length === 0) {
         container.appendChild(el('div', 'empty', 'No commits match the filter.'));
       } else {
-        local.forEach(function (row) {
-          container.appendChild(commitRow(row, graph.maxLanes));
-        });
+        container.appendChild(rowWindow(local, graph.maxLanes));
         if (graph.hasMore && !state.filter.trim()) {
           const more = el('div', 'load-more');
           more.appendChild(link('Load more commits', function () { post({ type: 'loadMore' }); }));
@@ -1007,8 +1111,9 @@
   // Deferred for the MVP, same as in the Git Changes view. Rows already carry
   // role/aria-level/aria-expanded, so a later pass needs only a roving
   // tabindex, arrow/Home/End/PageUp/PageDown handling and focus restoration
-  // across re-renders. Row virtualization belongs here too: at present every
-  // loaded commit is a live DOM row.
+  // across re-renders. Note that a focused row can now be scrolled out of the
+  // DOM entirely, so such a pass has to drive the scroll position and let
+  // syncWindows() rebuild the row rather than move focus between live nodes.
   // ------------------------------------------------------------------------
   function installKeyboardNavigation(_container) {
     /* intentionally empty - see comment above */

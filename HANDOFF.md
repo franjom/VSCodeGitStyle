@@ -38,9 +38,10 @@ Supporting code: `src/git.ts` (shells out to git, owns `parseStatus`),
 ### Commands
 
 ```
-npm test               # compile + 52 tests, node's built-in runner, ~14s
-npm run mutation-check # reintroduces 5 real past bugs, checks the tests catch them
-npm run package        # builds vs-git-style.vsix (~99 KB)
+npm test               # compile + 65 tests, node's built-in runner, ~15s
+npm run mutation-check # reintroduces 7 bugs, checks the tests catch them
+npm run preview-check  # drives the preview in headless Edge and checks the graph window
+npm run package        # builds vs-git-style.vsix (~105 KB)
 ```
 
 `dev/preview.html` and `dev/preview-repo.html` open in a browser and render the
@@ -50,8 +51,10 @@ launching an Extension Development Host. Press F5 for the real thing.
 ### Rules for changing this code
 
 1. **Run `npm test` before and after any change**, and `npm run mutation-check`
-   when you touch `src/git.ts` or `src/graph.ts`. The git handling broke twice
-   during development without anything noticing, which is why the suite exists.
+   when you touch `src/git.ts`, `src/graph.ts` or `media/virtual.js`. The git
+   handling broke twice during development without anything noticing, which is
+   why the suite exists. When you touch the graph window's rendering, run
+   `npm run preview-check` too — it is the only thing that exercises layout.
 2. **Verify against real git, not reasoning.** Build a throwaway repo in the
    temp directory (`tests/helpers.js` has a `TestRepo` class for exactly this)
    and check the actual output. Several bugs below were only found that way.
@@ -98,6 +101,20 @@ These each cost a real bug. They are commented in the code, but know them:
 - **A self-hosted host cannot be identified by name.** `git.example.com` says
   nothing, so provider detection falls back to a committed CI file
   (`.gitlab-ci.yml` → GitLab). `vsGitStyle.reviewProvider` overrides it.
+- **Only the commit rows on screen are in the DOM.** Each group in the graph
+  window is a windowed region, and the padding standing in for the hidden rows
+  is what holds the scrollbar still. Two consequences: a row you are holding a
+  reference to can vanish on the next scroll, and anything that rebuilds the
+  rows must put the scroll position back — emptying the container collapses its
+  height and drags the scroll to the top with it.
+- **A region's offset is measured, never computed.** Group headers, their
+  borders and the empty-state placeholders sit between the regions, and adding
+  up their heights by hand is how that goes wrong the first time something
+  between them changes.
+- **The viewport height changes without a window resize** — the icon font
+  arriving retags the toolbar, the splitters move the panes, and a hidden
+  webview measures nothing until it is shown. That is why a `ResizeObserver`
+  watches the scroller rather than a `resize` listener watching the window.
 - **The preview harnesses are not the extension.** `dev/preview.html` once
   uppercased every section header because `#frame .title` is a descendant
   selector. If something looks wrong only in the browser preview, suspect the
@@ -115,28 +132,37 @@ continuity with no gaps. Read timings: refs 46 ms, a 459-commit graph 143 ms,
 
 Nothing here is urgent; the extension is usable as it stands.
 
-1. **Row virtualization** in the graph window. Every loaded commit is a live DOM
-   row (~14 nodes, 2.4 SVG paths each). Measured: 200 rows is comfortable, 1000
-   takes ~440 ms, 8000 takes ~2.7 s. Past roughly 1500 rows it needs windowing;
-   `vsGitStyle.graphPageSize` (default 200) is the current mitigation.
-2. **Resizable columns** in the graph window. The grid template is fixed except
+1. **Resizable columns** in the graph window. The grid template is fixed except
    for the graph column, which is sized from the lane count.
-3. **Multi-repo switcher.** Only the first repository in a workspace is shown;
+2. **Multi-repo switcher.** Only the first repository in a workspace is shown;
    `ChangesViewProvider` already tracks all of them and the model carries a
    `repos` array, so this is mostly UI.
-4. **Real Seti file icons**, by vendoring `seti.woff` (MIT) and its class map,
+3. **Real Seti file icons**, by vendoring `seti.woff` (MIT) and its class map,
    replacing the hand-mapped language badges.
-5. **Keyboard navigation and screen-reader support.** Deliberately deferred by
+4. **Keyboard navigation and screen-reader support.** Deliberately deferred by
    the user. `installKeyboardNavigation()` in both `media/main.js` and
    `media/repo.js` is an empty hook, and rows already carry `role`,
    `aria-level` and `aria-expanded`, so a pass needs a roving tabindex plus
-   arrow/Home/End handling.
-6. **Pull/merge requests.** The node is a label only; populating it needs the
+   arrow/Home/End handling. In the graph window it also has to drive the scroll
+   position rather than move focus between live rows, since a focused row can
+   be scrolled out of the DOM.
+5. **Pull/merge requests.** The node is a label only; populating it needs the
    provider's API and a token.
+6. **Windowing the Git Changes tree**, if a repository ever turns up with enough
+   changed files to matter. The graph window was the one that needed it; the
+   sidebar's tree is still built whole.
+
+The row windowing was checked in headless Edge over the DevTools protocol
+(`npm run preview-check`) at 10, 200, 2,000 and 8,000 commits: the scroll height
+holds, the rows on screen are the right commits with no gaps at every scroll
+position, and the DOM stays at ~44 rows and ~740 nodes whatever the length.
+Render cost went from 2,245 ms to 17 ms at 8,000 rows.
 
 Untested paths: push, pull and sync against a remote that prompts for
 credentials (fetch is proven); more than 4 concurrent graph lanes; multiple
-repositories in one workspace.
+repositories in one workspace. The windowing has not been watched by a human in
+the real Extension Development Host — only in the browser harness, which uses
+the same CSS and JS.
 
 ### How to work with me
 
@@ -149,7 +175,7 @@ something doesn't work rather than reporting success.
 
 ## Where things stand
 
-- Clean tree at `7da6b8a`, 14 commits, ~7,350 lines.
+- 15 commits at `295b5f8`, plus the row virtualization work on top of it.
 - `vs-git-style.vsix` is built and gitignored. Install with:
   `code --install-extension D:\VsGitStyle\vs-git-style.vsix`
 - Toolchain used: Node 22.14, git 2.39.1, VS Code 1.137.

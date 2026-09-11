@@ -332,6 +332,7 @@ export class RepositoryWindow {
 <body>
 <div id="root" class="repo-shell"></div>
 <div id="menu" class="context-menu" hidden></div>
+<script nonce="${nonce}" src="${asset('virtual.js')}"></script>
 <script nonce="${nonce}" src="${asset('repo.js')}"></script>
 </body>
 </html>`;

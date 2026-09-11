@@ -1,9 +1,10 @@
 'use strict';
 
 /**
- * Reintroduces bugs that were actually hit while building this extension and
- * checks the suite notices. A green test run says the tests pass; this says
- * they are worth having.
+ * Reintroduces bugs that were actually hit while building this extension - and,
+ * for the row windowing, the two slips that windowing code classically grows -
+ * then checks the suite notices. A green test run says the tests pass; this
+ * says they are worth having.
  *
  * Every mutation is reverted afterwards, and the sources are recompiled at the
  * end. Run with: node tools/mutation-check.js
@@ -16,6 +17,7 @@ const path = require('node:path');
 const ROOT = path.resolve(__dirname, '..');
 const GIT_TS = path.join(ROOT, 'src', 'git.ts');
 const GRAPH_TS = path.join(ROOT, 'src', 'graph.ts');
+const VIRTUAL_JS = path.join(ROOT, 'media', 'virtual.js');
 
 const MUTATIONS = [
   {
@@ -65,6 +67,22 @@ const MUTATIONS = [
       "      return this.exec(root, ['commit', '--amend', '--no-edit']);\n" +
       '    }',
   },
+  {
+    // Rounding the bottom edge down drops the row that is only half on screen,
+    // leaving a sliver of empty scroller under the last one.
+    label: 'the partly visible row at the bottom edge dropped',
+    file: VIRTUAL_JS,
+    from: 'const end = clamp(Math.ceil(bottom / rowHeight) + overscan, start, total);',
+    to: 'const end = clamp(Math.floor(bottom / rowHeight) + overscan, start, total);',
+  },
+  {
+    // Without the ceiling the range runs past the list, and the rows asked for
+    // beyond the end are undefined.
+    label: 'the row range not clamped to the end of the list',
+    file: VIRTUAL_JS,
+    from: 'const end = clamp(Math.ceil(bottom / rowHeight) + overscan, start, total);',
+    to: 'const end = Math.max(Math.ceil(bottom / rowHeight) + overscan, start);',
+  },
 ];
 
 function run(command) {
@@ -98,12 +116,18 @@ function main() {
   let caught = 0;
   for (const mutation of MUTATIONS) {
     const original = fs.readFileSync(mutation.file, 'utf8');
-    if (!original.includes(mutation.from)) {
+    // The patterns below are written with LF, but git hands these files to a
+    // Windows working tree with CRLF, which silently turned every multi-line
+    // mutation into a SKIP - a weaker run reported as a clean one. Match
+    // against a normalised copy; the exact original bytes are what gets put
+    // back afterwards.
+    const normalised = original.replace(/\r\n/g, '\n');
+    if (!normalised.includes(mutation.from)) {
       console.log('SKIP    ' + mutation.label + '  (the code has moved on)\n');
       continue;
     }
 
-    fs.writeFileSync(mutation.file, original.replace(mutation.from, mutation.to));
+    fs.writeFileSync(mutation.file, normalised.replace(mutation.from, mutation.to));
     const compiled = run('npx tsc -p ./');
     const failures = compiled.ok ? failingTests() : ['(did not compile)'];
     fs.writeFileSync(mutation.file, original);

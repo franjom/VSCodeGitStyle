@@ -20,7 +20,9 @@ command) opens the graph window.
 To iterate on the visual design without launching the extension host, open
 [dev/preview.html](dev/preview.html) or [dev/preview-repo.html](dev/preview-repo.html)
 in a browser. They load the real CSS and JS against captured models with a
-stubbed webview API.
+stubbed webview API. `preview-repo.html?rows=2000` repeats the captured history
+until it is that long, so the row windowing can be exercised without capturing a
+huge repository.
 
 ## Git Changes (sidebar)
 
@@ -92,6 +94,7 @@ A `WebviewPanel` in the editor area.
 | Double-click a commit | done, opens the whole commit as a read-only patch |
 | Context menu: details, copy ID, new branch here | done |
 | Paging | `Load more commits`, page size from `vsGitStyle.graphPageSize` (default 200); incoming commits get their own budget so a large fetch does not truncate Local History |
+| Row virtualization | done; only the rows on screen are in the DOM, so an 8,000-commit history costs what 200 does |
 | Stays current | reloads when the repository changes anywhere - the sidebar, a terminal, another editor - not only on its own actions |
 | Resizable columns | not done; the grid template is fixed except for the graph column |
 | Resizable details pane, hideable | done, draggable splitter plus a toolbar toggle; width and visibility persist |
@@ -111,6 +114,42 @@ The layout was verified against `git log --graph` on a repository with real
 merge topology, including a check that every parent edge lands in the lane where
 that parent's own dot sits.
 
+### Row virtualization
+
+Only the commit rows on screen exist in the DOM. Each group - Incoming and Local
+History - is one region whose rows are windowed: the rows scrolled out of sight
+are replaced by padding of exactly their height, so the scrollbar, and every
+offset below the region, sit where the whole list would have put them. Eight rows
+of overscan are kept beyond each edge, and the window is recomputed once per
+frame on scroll rather than once per scroll event.
+
+The arithmetic is [media/virtual.js](media/virtual.js), kept free of the DOM so
+it can be fed directly from tests. The rest is measurement: a region's offset is
+read from the live layout rather than computed, because group headers, their
+borders and the empty-state placeholders all sit between the regions. A region's
+own height never changes, which is what makes that measurement stable as the
+windows fill in.
+
+A `ResizeObserver` on the scroller drives a resync. The height of the viewport
+decides how many rows are needed, and it changes for more reasons than the
+window being resized: the icon font arriving retags the toolbar's height, the
+splitters move the panes, and a webview that was hidden when it first rendered
+measures nothing at all until it is shown.
+
+Measured in Edge at 1400x900 against the same page, before and after, with real
+commit rows multiplied synthetically (`npm run preview-check -- --rows=8000`):
+
+| rows | render before | render after | DOM nodes before | after |
+| --- | --- | --- | --- | --- |
+| 202 | 54 ms | 7 ms | 3.3k | 738 |
+| 1002 | 248 ms | 14 ms | 16k | 738 |
+| 2002 | 729 ms | 13 ms | 32k | 738 |
+| 8002 | 2,245 ms | 17 ms | 128k | 738 |
+
+The cost no longer follows the length of the history: what is in the DOM is a
+screenful either way. `vsGitStyle.graphPageSize` (default 200) now limits how
+much git is asked for, not how much the window can survive drawing.
+
 Reads shell out to git with machine-readable formats (`status --porcelain=v2 -z`,
 `for-each-ref`, `stash list --format`, `log --format`). Network operations go
 through the built-in `git.fetch` / `git.pull` / `git.push` / `git.sync` commands
@@ -121,25 +160,11 @@ so VS Code's credential plumbing stays in play.
 - **Keyboard navigation and screen-reader support** — `installKeyboardNavigation()`
   in both [media/main.js](media/main.js) and [media/repo.js](media/repo.js) is an
   empty hook. Every row already carries `role`, `aria-level` and `aria-expanded`,
-  so a future pass only needs a roving tabindex plus arrow/Home/End handling.
+  so a future pass needs a roving tabindex plus arrow/Home/End handling — and, in
+  the graph window, must drive the scroll position and let the windowing rebuild
+  the row, because a focused row can now be scrolled out of the DOM entirely.
 - **Pull / merge requests** — the node is a label only; populating it needs the
   provider's API and a token (GitHub, GitLab, Azure DevOps).
-- **Row virtualization** — every loaded commit is a live DOM row (about 14 DOM
-  nodes and 2.4 SVG paths each). Measured row-build cost, with real commit rows
-  multiplied synthetically:
-
-  | rows | build | DOM nodes |
-  | --- | --- | --- |
-  | 100 | 125 ms | 1.5k |
-  | 432 | 212 ms | 6.3k |
-  | 1000 | 440 ms | 14.5k |
-  | 3000 | 920 ms | 43k |
-  | 8000 | 2.7 s | 115k |
-
-  Measured under jsdom, which does no layout, so treat these as relative rather
-  than exact. The default 200-commit page is comfortable and a few `Load more`
-  presses stay fine; past roughly 1500 rows the window starts to feel heavy, which
-  is the point at which windowing needs doing rather than the page size lowered.
 
 ## Settings
 
@@ -158,7 +183,7 @@ so VS Code's credential plumbing stays in play.
 ## Tests
 
 `npm test` compiles and runs the suite with node's built-in runner - no test
-framework, no dependencies. 52 tests in [tests/](tests/):
+framework, no dependencies. 65 tests in [tests/](tests/):
 
 - **[tests/parse.test.js](tests/parse.test.js)** - the porcelain v2 parser, the
   log and name-status parsers, and remote URL handling. Table-driven, no git
@@ -171,6 +196,12 @@ framework, no dependencies. 52 tests in [tests/](tests/):
   row it crosses and lands on its parent's dot.
 - **[tests/tree.test.js](tests/tree.test.js)** - folder-chain compression,
   ordering, counts, and paths containing spaces.
+- **[tests/virtual.test.js](tests/virtual.test.js)** - the row windowing range:
+  partly visible rows at both edges, overscan and its clamps, regions above and
+  below the viewport, an empty list, a viewport not yet measured. Two of them are
+  invariants rather than cases - that the hidden rows above, the rendered ones
+  and the hidden rows below always add up to the whole list, and that walking the
+  viewport down the list a row at a time never skips one.
 - **[tests/repo.test.js](tests/repo.test.js)** - real repositories built in the
   temp directory and thrown away: every change type at once, ahead/behind
   against an upstream, stashes, a conflicted merge and its resolution, abort,
@@ -179,17 +210,39 @@ framework, no dependencies. 52 tests in [tests/](tests/):
 
 ### Are the tests worth having?
 
-`npm run mutation-check` answers that. It reintroduces five bugs that were
-actually hit while building this - the graph lane drift, collapsing a
-staged-then-edited file into one entry, dropping `--first-parent` from a merge's
-file list, reading a rename's original path without consuming it, and amending
-with an empty message box - then reports whether the suite noticed. All five are
-caught; each mutation is reverted and the sources recompiled afterwards.
+`npm run mutation-check` answers that. It reintroduces seven bugs and reports
+whether the suite noticed. Five were actually hit while building this - the graph
+lane drift, collapsing a staged-then-edited file into one entry, dropping
+`--first-parent` from a merge's file list, reading a rename's original path
+without consuming it, and amending with an empty message box. The other two are
+the slips windowing code classically grows: rounding the bottom edge down, which
+leaves a sliver of empty scroller under the last row, and not clamping the range
+to the end of the list. All seven are caught; each mutation is reverted and the
+sources recompiled afterwards.
 
 The fourth of those was originally missed, which is the point of running it: the
 test written for that bug could not fail, because for ordinary paths not
 advancing the index is genuinely equivalent. It only matters when the original
 path itself looks like a status record, so that is what the test now feeds it.
+
+### Checking the webview itself
+
+`npm run preview-check` drives [dev/preview-repo.html](dev/preview-repo.html) in
+headless Edge or Chrome over the DevTools protocol - node's built-in WebSocket,
+so no dependency - and checks what node cannot: that the scroll height is what
+the whole history would have been and never moves, that the rows on screen are
+the right commits with no gaps at any scroll position, that the DOM stays
+bounded, and that selecting a commit, collapsing a group and filtering all
+survive the windowing. It also reports the render cost.
+
+```
+npm run preview-check -- --rows=8000 --shot=out.png
+```
+
+`--rows` sets how long the synthetic history is, `--shot` writes a screenshot,
+`--keep` leaves the browser profile behind. Set `VSG_BROWSER` if neither Edge nor
+Chrome is where it is looked for. It is not part of `npm test`, which stays
+dependency-free and headless.
 
 ## Measured against
 

@@ -50,6 +50,39 @@
 
 <script src="./preview-repo-model.js"></script>
 <script>
+  // ?rows=N repeats the captured local history until it is N commits long, so
+  // row virtualization can be exercised without capturing a huge repository.
+  (function () {
+    var want = parseInt(new URLSearchParams(location.search).get('rows'), 10);
+    if (!want) {
+      return;
+    }
+    var graph = window.__VSG_REPO_MODEL.graph;
+    var local = graph.rows.filter(function (r) { return r.group === 'local'; });
+    var grown = [];
+    for (var i = 0; grown.length < want; i++) {
+      var source = local[i % local.length];
+      if (i < local.length) {
+        grown.push(source);
+        continue;
+      }
+      var clone = JSON.parse(JSON.stringify(source));
+      // Unique in the first seven characters, so the short hash in the ID
+      // column identifies the row and tools/preview-check.js can tell which
+      // commits are on screen.
+      clone.commit.hash = ('000000' + i.toString(16)).slice(-7) + clone.commit.hash.slice(7);
+      clone.commit.shortHash = clone.commit.hash.slice(0, 7);
+      clone.commit.subject = source.commit.subject + ' (' + i + ')';
+      // Only the captured rows carry refs and HEAD; cloning those would put the
+      // same branch chip on hundreds of commits.
+      clone.commit.refs = [];
+      clone.isHead = false;
+      grown.push(clone);
+    }
+    graph.rows = graph.rows.filter(function (r) { return r.group === 'incoming'; }).concat(grown);
+  })();
+</script>
+<script>
   let stored = {};
   window.acquireVsCodeApi = function () {
     return {
@@ -98,6 +131,7 @@
     };
   };
 </script>
+<script src="../media/virtual.js"></script>
 <script src="../media/repo.js"></script>
 </body>
 </html>
