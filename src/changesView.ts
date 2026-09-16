@@ -58,8 +58,6 @@ export class ChangesViewProvider implements vscode.WebviewViewProvider {
 
   private view?: vscode.WebviewView;
   private activeRoot?: string;
-  /** Last number put on the badge, so an unchanged count is not re-posted. */
-  private badgeCount = -1;
   private refreshTimer?: NodeJS.Timeout;
   private readonly repoListeners = new Map<string, vscode.Disposable>();
   private readonly disposables: vscode.Disposable[] = [];
@@ -130,7 +128,6 @@ export class ChangesViewProvider implements vscode.WebviewViewProvider {
     view.onDidDispose(() => {
       if (this.view === view) {
         this.view = undefined;
-        this.badgeCount = -1;
       }
     });
   }
@@ -211,20 +208,27 @@ export class ChangesViewProvider implements vscode.WebviewViewProvider {
     try {
       this.setBadge(await this.git.changeCount(root));
     } catch {
-      // A repository that cannot be read leaves the badge as it was; a failed
-      // background count is not worth an error in the panel.
+      // A read can lose a race with git's own index lock. Leaving the number
+      // as it was would strand a badge that no later event comes back to fix,
+      // because a failed read is not a repository change - so ask again.
+      this.scheduleRefresh(2000);
     }
   }
 
   /**
    * Puts the number of changed files on the activity bar icon, the way Visual
    * Studio marks its Git Changes tool window. Zero changes means no badge.
+   *
+   * The count is written every time rather than compared against the last one
+   * written. What is on the icon is VS Code's state, not ours, and it outlives
+   * things our side does not see - the view being disposed and resolved again,
+   * a window reload, the container being rebuilt. A cached "we already said 0"
+   * suppresses precisely the write that would put a stale badge right.
    */
   private setBadge(count: number): void {
-    if (!this.view || count === this.badgeCount) {
+    if (!this.view) {
       return;
     }
-    this.badgeCount = count;
     this.view.badge =
       count > 0
         ? { value: count, tooltip: count === 1 ? '1 changed file' : `${count} changed files` }
