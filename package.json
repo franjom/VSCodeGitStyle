@@ -6,6 +6,10 @@
   "publisher": "local",
   "private": true,
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/franjom/VSCodeGitStyle.git"
+  },
   "engines": {
     "vscode": "^1.90.0"
   },
@@ -108,7 +112,7 @@
     "mutation-check": "node tools/mutation-check.js",
     "preview-check": "node tools/preview-check.js",
     "install-local": "npm run package && code --install-extension vs-git-style.vsix --force",
-    "package": "vsce package --no-dependencies --baseContentUrl https://local.invalid/vs-git-style --baseImagesUrl https://local.invalid/vs-git-style --out vs-git-style.vsix",
+    "package": "vsce package --no-dependencies --out vs-git-style.vsix",
     "test": "npm run compile && node --test",
     "test:only": "node --test",
     "vscode:prepublish": "npm run compile",
