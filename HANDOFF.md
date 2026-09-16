@@ -41,7 +41,7 @@ Supporting code: `src/git.ts` (shells out to git, owns `parseStatus`),
 npm test               # compile + 65 tests, node's built-in runner, ~15s
 npm run mutation-check # reintroduces 7 bugs, checks the tests catch them
 npm run preview-check  # drives the preview in headless Edge and checks the graph window
-npm run package        # builds vs-git-style.vsix (~105 KB)
+npm run package        # builds vs-git-style-<version>.vsix (~110 KB)
 ```
 
 `dev/preview.html` and `dev/preview-repo.html` open in a browser and render the
@@ -176,6 +176,6 @@ something doesn't work rather than reporting success.
 ## Where things stand
 
 - 15 commits at `295b5f8`, plus the row virtualization work on top of it.
-- `vs-git-style.vsix` is built and gitignored. Install with:
-  `code --install-extension D:\VsGitStyle\vs-git-style.vsix`
+- `vs-git-style-<version>.vsix` is built and gitignored. Install the newest build
+  with `npm run install-local`.
 - Toolchain used: Node 22.14, git 2.39.1, VS Code 1.137.
