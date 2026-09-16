@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { Git } = require('../out/git.js');
+const { countChanges, Git } = require('../out/git.js');
 const { readGraph, readRefs, readCommitDetails, readReviewInfo } = require('../out/graph.js');
 const { TestRepo, assertLaneContinuity, assertLanesInRange } = require('./helpers.js');
 
@@ -52,6 +52,24 @@ test('snapshot reports every change type in the right list', async (t) => {
 
   assert.equal(snapshot.conflicts.length, 0);
   assert.equal(snapshot.operation, undefined);
+});
+
+test('the badge counts each changed file once, ignoring ignored files', async (t) => {
+  const repo = repoWithEveryChange();
+  t.after(() => repo.dispose());
+  repo.write('.gitignore', 'bin/\n');
+  repo.write('bin/output.dll', 'binary\n');
+
+  const snapshot = await git.snapshot(repo.dir, true);
+  assert.ok(
+    snapshot.unstaged.some((c) => c.status === 'ignored'),
+    'the ignored file is in the list the panel shows'
+  );
+
+  // Added, Both, Deleted, Modified, Untracked, new name, .gitignore - and
+  // Both.cs is staged as well as edited again, so it must not count twice.
+  assert.equal(countChanges(snapshot), 7);
+  assert.equal(await git.changeCount(repo.dir), 7, 'the cheap count agrees');
 });
 
 test('snapshot reads the branch, and ahead/behind without an upstream', async (t) => {

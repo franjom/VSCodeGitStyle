@@ -139,6 +139,14 @@ export class Git {
     };
   }
 
+  /**
+   * Just the badge number. Kept apart from snapshot() so a collapsed panel
+   * costs one `git status` rather than the whole set of snapshot reads.
+   */
+  async changeCount(root: string): Promise<number> {
+    return countChanges(await this.status(root, false));
+  }
+
   private async head(root: string): Promise<{ name: string; detached: boolean }> {
     const out = (await this.tryExec(root, ['rev-parse', '--abbrev-ref', 'HEAD']))?.trim();
     if (!out || out === 'HEAD') {
@@ -403,6 +411,25 @@ export interface StatusLists {
   staged: FileChange[];
   unstaged: FileChange[];
   conflicts: FileChange[];
+}
+
+/**
+ * How many changed files the activity bar badge reports. A path that is edited
+ * both in the index and in the working tree is one changed file rather than
+ * two, and ignored files are not changes at all.
+ *
+ * Exported as a pure function so the badge and the panel count the same way.
+ */
+export function countChanges(lists: StatusLists): number {
+  const paths = new Set<string>();
+  for (const list of [lists.staged, lists.unstaged, lists.conflicts]) {
+    for (const change of list) {
+      if (change.status !== 'ignored') {
+        paths.add(change.path);
+      }
+    }
+  }
+  return paths.size;
 }
 
 /**

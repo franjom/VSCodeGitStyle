@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { Git, RepoSnapshot } from './git';
+import { countChanges, Git, RepoSnapshot } from './git';
 import { ApiRepository, GitApi } from './gitExtension';
 import { buildTree, TreeNode } from './tree';
 
@@ -58,6 +58,8 @@ export class ChangesViewProvider implements vscode.WebviewViewProvider {
 
   private view?: vscode.WebviewView;
   private activeRoot?: string;
+  /** Last number put on the badge, so an unchanged count is not re-posted. */
+  private badgeCount = -1;
   private refreshTimer?: NodeJS.Timeout;
   private readonly repoListeners = new Map<string, vscode.Disposable>();
   private readonly disposables: vscode.Disposable[] = [];
@@ -125,6 +127,12 @@ export class ChangesViewProvider implements vscode.WebviewViewProvider {
         this.scheduleRefresh(50);
       }
     });
+    view.onDidDispose(() => {
+      if (this.view === view) {
+        this.view = undefined;
+        this.badgeCount = -1;
+      }
+    });
   }
 
   // --------------------------------------------------------------- refresh ---
@@ -140,7 +148,13 @@ export class ChangesViewProvider implements vscode.WebviewViewProvider {
   }
 
   private async refresh(): Promise<void> {
-    if (!this.view?.visible) {
+    if (!this.view) {
+      return;
+    }
+    if (!this.view.visible) {
+      // Collapsed panel: the lists are not worth rebuilding, but the badge on
+      // the activity bar icon still has to be right.
+      await this.refreshBadge();
       return;
     }
 
@@ -166,6 +180,7 @@ export class ChangesViewProvider implements vscode.WebviewViewProvider {
           .getConfiguration('vsGitStyle')
           .get<boolean>('showIgnoredFiles', false);
         const snapshot = await this.git.snapshot(this.activeRoot, includeIgnored);
+        this.setBadge(countChanges(snapshot));
         model.active = {
           ...snapshot,
           unstagedTree: buildTree(snapshot.unstaged, separator),
@@ -176,9 +191,44 @@ export class ChangesViewProvider implements vscode.WebviewViewProvider {
       } catch (err) {
         this.post({ type: 'error', message: describe(err) });
       }
+    } else {
+      this.setBadge(0);
     }
 
     this.post({ type: 'model', model });
+  }
+
+  /**
+   * Reads the count on its own, for when the panel is collapsed and there is
+   * no model to derive it from.
+   */
+  private async refreshBadge(): Promise<void> {
+    const root = this.activeRoot ?? this.gitApi.repositories[0]?.rootUri.fsPath;
+    if (!root) {
+      this.setBadge(0);
+      return;
+    }
+    try {
+      this.setBadge(await this.git.changeCount(root));
+    } catch {
+      // A repository that cannot be read leaves the badge as it was; a failed
+      // background count is not worth an error in the panel.
+    }
+  }
+
+  /**
+   * Puts the number of changed files on the activity bar icon, the way Visual
+   * Studio marks its Git Changes tool window. Zero changes means no badge.
+   */
+  private setBadge(count: number): void {
+    if (!this.view || count === this.badgeCount) {
+      return;
+    }
+    this.badgeCount = count;
+    this.view.badge =
+      count > 0
+        ? { value: count, tooltip: count === 1 ? '1 changed file' : `${count} changed files` }
+        : undefined;
   }
 
   private post(message: unknown): void {
