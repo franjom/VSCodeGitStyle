@@ -219,20 +219,39 @@ export class ChangesViewProvider implements vscode.WebviewViewProvider {
    * Puts the number of changed files on the activity bar icon, the way Visual
    * Studio marks its Git Changes tool window. Zero changes means no badge.
    *
-   * The count is written every time rather than compared against the last one
-   * written. What is on the icon is VS Code's state, not ours, and it outlives
-   * things our side does not see - the view being disposed and resolved again,
-   * a window reload, the container being rebuilt. A cached "we already said 0"
-   * suppresses precisely the write that would put a stale badge right.
+   * Clearing takes two writes, which needs explaining. VS Code drops a badge
+   * assignment whose value and tooltip both match the one it already holds, and
+   * it holds that on the view object rather than on the icon:
+   *
+   *   set badge(e) { !(e?.value === this.#d?.value &&
+   *                    e?.tooltip === this.#d?.tooltip) && (... send ...) }
+   *
+   * A view VS Code has resolved afresh starts with that cache empty while the
+   * icon still carries the badge the previous instance put there, so assigning
+   * undefined matches the empty cache, is dropped, and the stale number stays
+   * on the icon with nothing able to shift it. Assigning zero first is not
+   * dropped, and a zero badge is never drawn - the activity bar sums its number
+   * badges and only renders a total above zero - so the icon clears and the
+   * cache is left holding something undefined is certain to differ from.
    */
   private setBadge(count: number): void {
     if (!this.view) {
       return;
     }
-    this.view.badge =
-      count > 0
-        ? { value: count, tooltip: count === 1 ? '1 changed file' : `${count} changed files` }
-        : undefined;
+    try {
+      if (count > 0) {
+        this.view.badge = {
+          value: count,
+          tooltip: count === 1 ? '1 changed file' : `${count} changed files`,
+        };
+        return;
+      }
+      this.view.badge = { value: 0, tooltip: 'No changes' };
+      this.view.badge = undefined;
+    } catch {
+      // Writing to a view that has just been disposed throws. The badge is not
+      // worth failing a refresh over, and the next one will set it anyway.
+    }
   }
 
   private post(message: unknown): void {
