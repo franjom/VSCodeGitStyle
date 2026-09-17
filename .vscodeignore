@@ -9,3 +9,5 @@ node_modules/**
 !out/**/*.js
 tsconfig.json
 .gitignore
+CLAUDE.md
+HANDOFF.md

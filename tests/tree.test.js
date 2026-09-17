@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { buildTree } = require('../out/tree.js');
+const { buildTree } = require('../out/git/tree.js');
 
 const SEP = String.fromCharCode(92); // backslash, as shown on Windows
 

@@ -1,4 +1,4 @@
-import { FileChange } from './git';
+import { FileChange } from '../git/git';
 
 export interface FolderNode {
   kind: 'folder';

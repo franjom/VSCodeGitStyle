@@ -1,0 +1,140 @@
+/*
+ * Chrome both webviews share: the tokens they colour from, the toolbar button,
+ * the busy bar, links and the context menu.
+ *
+ * Each view carried its own copy of all of this, and the copies had drifted -
+ * the menu was 180px wide in one and 190px in the other, and only one of them
+ * had the icon column Visual Studio's menus lead with. They live here once, and
+ * each view's own stylesheet is left describing only what is peculiar to it.
+ *
+ * What legitimately differs stays there: `body`, because the Changes view is a
+ * sidebar and the Repository window is an editor and they take their background
+ * from different tokens, and `.commit-row`, which names one thing in the graph
+ * and quite another in the commit box.
+ */
+
+:root {
+  --vsg-border: var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+  --vsg-muted: var(--vscode-descriptionForeground, #9d9d9d);
+  --vsg-hover: var(--vscode-list-hoverBackground, rgba(255, 255, 255, 0.07));
+  --vsg-active: var(--vscode-list-activeSelectionBackground, #04395e);
+  --vsg-active-fg: var(--vscode-list-activeSelectionForeground, #ffffff);
+}
+
+/* The italic grey both views write "nothing here" in. Each sets its own
+   padding, because one aligns under a tree and the other under a section. */
+.empty {
+  color: var(--vsg-muted);
+  font-style: italic;
+  font-size: 12px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+.icon-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.icon-btn:hover:not(:disabled) {
+  background: var(--vsg-hover);
+  border-color: var(--vsg-border);
+}
+
+.icon-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.icon-btn .codicon {
+  font-size: 16px;
+}
+
+.progress {
+  height: 2px;
+  flex: 0 0 auto;
+  overflow: hidden;
+  background: transparent;
+}
+
+.progress.busy {
+  background: var(--vscode-progressBar-background, #0078d4);
+  animation: vsg-pulse 1.1s ease-in-out infinite;
+}
+
+.link {
+  color: var(--vscode-textLink-foreground, #4daafc);
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.link:hover {
+  color: var(--vscode-textLink-activeForeground, #63b3ff);
+  text-decoration: underline;
+}
+
+.context-menu {
+  position: fixed;
+  z-index: 100;
+  min-width: 180px;
+  padding: 4px 0;
+  background: var(--vscode-menu-background, #1f1f1f);
+  color: var(--vscode-menu-foreground, #cccccc);
+  border: 1px solid var(--vscode-menu-border, var(--vsg-border));
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+}
+
+.context-menu[hidden] {
+  display: none;
+}
+
+.context-menu .item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 14px 4px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.context-menu .item:hover {
+  background: var(--vscode-menu-selectionBackground, #04395e);
+  color: var(--vscode-menu-selectionForeground, #ffffff);
+}
+
+.context-menu .separator {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--vscode-menu-separatorBackground, var(--vsg-border));
+}
+
+.context-menu .menu-icon {
+  flex: 0 0 16px;
+  width: 16px;
+  font-size: 14px;
+  text-align: center;
+  opacity: 0.85;
+}
+
+@keyframes vsg-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}

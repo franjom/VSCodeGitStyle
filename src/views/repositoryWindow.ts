@@ -1,8 +1,9 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { readFileDiff } from './diff';
-import { Git } from './git';
-import { GitApi } from './gitExtension';
+import { readFileDiff } from '../git/diff';
+import { Git } from '../git/git';
+import { GitApi } from '../gitExtension';
+import { BLOB_SCHEME, COMMIT_SCHEME } from './contentProviders';
 import {
   GraphModel,
   readCommitDetails,
@@ -12,10 +13,7 @@ import {
   RefEntry,
   ReviewInfo,
   ReviewProvider,
-} from './graph';
-
-export const COMMIT_SCHEME = 'vsgitstyle-commit';
-export const BLOB_SCHEME = 'vsgitstyle-blob';
+} from '../git/graph';
 
 const DEFAULT_PAGE_SIZE = 200;
 
@@ -388,70 +386,21 @@ export class RepositoryWindow {
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource}; font-src ${webview.cspSource}; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link href="${asset('codicon.css')}" rel="stylesheet">
+<link href="${asset('shell.css')}" rel="stylesheet">
 <link href="${asset('repo.css')}" rel="stylesheet">
 <title>Git Repository</title>
 </head>
 <body>
 <div id="root" class="repo-shell"></div>
 <div id="menu" class="context-menu" hidden></div>
+<script nonce="${nonce}" src="${asset('format.js')}"></script>
+<script nonce="${nonce}" src="${asset('dom.js')}"></script>
 <script nonce="${nonce}" src="${asset('virtual.js')}"></script>
+<script nonce="${nonce}" src="${asset('graphview.js')}"></script>
 <script nonce="${nonce}" src="${asset('diffview.js')}"></script>
 <script nonce="${nonce}" src="${asset('syntax.js')}"></script>
 <script nonce="${nonce}" src="${asset('repo.js')}"></script>
 </body>
 </html>`;
-  }
-}
-
-/**
- * Backs the `vsgitstyle-blob:` scheme, so one file at one revision can be shown
- * as a read-only document and fed to `vscode.diff`.
- */
-export class BlobContentProvider implements vscode.TextDocumentContentProvider {
-  constructor(private readonly git: Git) {}
-
-  async provideTextDocumentContent(uri: vscode.Uri): Promise<string> {
-    const params = new URLSearchParams(uri.query);
-    const root = params.get('root');
-    const rev = params.get('rev');
-    const filePath = params.get('path');
-    if (!root || !rev || !filePath) {
-      return '';
-    }
-    try {
-      return await this.git.exec(root, ['show', `${rev}:${filePath}`]);
-    } catch {
-      // The path does not exist at that revision, or the revision does not
-      // exist at all (the root commit's parent). An empty side is correct.
-      return '';
-    }
-  }
-}
-
-/**
- * Backs the `vsgitstyle-commit:` scheme used by "View Commit Details", so a
- * commit opens as an ordinary read-only diff document.
- */
-export class CommitContentProvider implements vscode.TextDocumentContentProvider {
-  constructor(private readonly git: Git) {}
-
-  async provideTextDocumentContent(uri: vscode.Uri): Promise<string> {
-    const params = new URLSearchParams(uri.query);
-    const root = params.get('root');
-    const hash = params.get('hash');
-    if (!root || !hash) {
-      return '';
-    }
-    try {
-      return await this.git.exec(root, [
-        'show',
-        '--stat',
-        '--patch',
-        '--no-color',
-        hash,
-      ]);
-    } catch (err) {
-      return err instanceof Error ? err.message : String(err);
-    }
   }
 }

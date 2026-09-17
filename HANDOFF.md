@@ -21,21 +21,21 @@ Visual Studio.** Don't chase completeness for its own sake.
 Two views, both webviews styled entirely with VS Code theme tokens:
 
 - **Git Changes** — a `WebviewView` in its own activity-bar container
-  (`media/main.js`, `media/main.css`, `src/changesView.ts`). Branch dropdown,
+  (`media/main.js`, `media/main.css`, `src/views/changesView.ts`). Branch dropdown,
   fetch/pull/push/sync, outgoing/incoming counts, commit box with AI message
   generation, `Commit All` / `Commit Staged` split button, Amend, and four
   sections in this order: Merge Conflicts, Staged Changes, Changes, Stashes.
 - **Git Repository** — a `WebviewPanel` with the commit graph
-  (`media/repo.js`, `media/repo.css`, `src/repositoryWindow.ts`,
-  `src/graph.ts`). Branches/tags pane, Incoming and Local History groups, SVG
+  (`media/repo.js`, `media/repo.css`, `src/views/repositoryWindow.ts`,
+  `src/git/graph.ts`). Branches/tags pane, Incoming and Local History groups, SVG
   lane graph, Message/Author/Date/ID columns, history filter, paging, and a
-  commit details pane docked across the bottom (`src/diff.ts` parses one file's
+  commit details pane docked across the bottom (`src/git/diff.ts` parses one file's
   changes into aligned rows, `media/diffview.js` holds the row collapsing,
   change navigation and changes-tree arithmetic, `media/syntax.js` colours the
   code, `media/repo.js` draws them).
 
-Supporting code: `src/git.ts` (shells out to git, owns `parseStatus`),
-`src/tree.ts` (folder tree with single-child chain compression),
+Supporting code: `src/git/git.ts` (shells out to git, owns `parseStatus`),
+`src/git/tree.ts` (folder tree with single-child chain compression),
 `src/gitExtension.ts` (minimal typing of the built-in `vscode.git` API).
 
 ### Commands
@@ -54,7 +54,7 @@ launching an Extension Development Host. Press F5 for the real thing.
 ### Rules for changing this code
 
 1. **Run `npm test` before and after any change**, and `npm run mutation-check`
-   when you touch `src/git.ts`, `src/graph.ts` or `media/virtual.js`. The git
+   when you touch `src/git/git.ts`, `src/git/graph.ts` or `media/virtual.js`. The git
    handling broke twice during development without anything noticing, which is
    why the suite exists. When you touch the graph window's rendering, run
    `npm run preview-check` too — it is the only thing that exercises layout.

@@ -1,14 +1,14 @@
 import * as vscode from 'vscode';
-import { ChangesViewProvider } from './changesView';
-import { Git } from './git';
+import { ChangesViewProvider } from './views/changesView';
+import { Git } from './git/git';
 import { activateGitApi } from './gitExtension';
 import {
   BlobContentProvider,
   BLOB_SCHEME,
   CommitContentProvider,
   COMMIT_SCHEME,
-  RepositoryWindow,
-} from './repositoryWindow';
+} from './views/contentProviders';
+import { RepositoryWindow } from './views/repositoryWindow';
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const api = await activateGitApi();

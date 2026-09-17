@@ -108,7 +108,7 @@
     }
   },
   "scripts": {
-    "compile": "tsc -p ./",
+    "compile": "node tools/clean-out.js && tsc -p ./",
     "mutation-check": "node tools/mutation-check.js",
     "preview-check": "node tools/preview-check.js",
     "install-local": "npm run package && node tools/install-local.js",

@@ -30,6 +30,9 @@
   const visibleRange = self.VsgVirtual.visibleRange;
   const diffView = self.VsgDiffView;
   const syntax = self.VsgSyntax;
+  const graphView = self.VsgGraphView;
+  const dom = self.VsgDom;
+  const format = self.VsgFormat;
 
   const persisted = vscode.getState() || {};
 
@@ -84,86 +87,39 @@
   }
 
   // ------------------------------------------------------------- dom helpers
+  //
+  // The construction itself lives in media/dom.js, shared with the Git Changes
+  // view. These are the local names the rendering below reads with, plus the
+  // one binding dom.js cannot make for us: which element is this view's menu.
 
-  function el(tag, className, text) {
-    const node = document.createElement(tag);
-    if (className) {
-      node.className = className;
-    }
-    if (text !== undefined && text !== null) {
-      node.textContent = text;
-    }
-    return node;
-  }
+  const laneX = function (lane) {
+    return graphView.laneX(lane, LANE_W);
+  };
+  const color = function (index) {
+    return graphView.laneColor(index, LANE_COLORS);
+  };
+  const graphWidth = function (maxLanes) {
+    return graphView.graphWidth(maxLanes, LANE_W);
+  };
+  const matches = function (row) {
+    return graphView.matchesFilter(row.commit, state.filter);
+  };
 
-  function icon(name, extraClass) {
-    const node = el('i', 'codicon codicon-' + name + (extraClass ? ' ' + extraClass : ''));
-    node.setAttribute('aria-hidden', 'true');
-    return node;
-  }
-
-  function iconButton(codicon, title, onClick, disabled) {
-    const button = el('button', 'icon-btn');
-    button.title = title;
-    button.setAttribute('aria-label', title);
-    button.appendChild(icon(codicon));
-    if (disabled) {
-      button.disabled = true;
-    }
-    button.addEventListener('click', function (event) {
-      event.stopPropagation();
-      onClick(event);
-    });
-    return button;
-  }
-
-  function link(text, onClick) {
-    const node = el('a', 'link', text);
-    node.addEventListener('click', function (event) {
-      event.stopPropagation();
-      onClick();
-    });
-    return node;
-  }
+  const el = dom.el;
+  const icon = dom.icon;
+  const iconButton = dom.iconButton;
+  const link = dom.link;
+  const formatDate = format.formatDate;
 
   function showMenu(event, items) {
-    event.preventDefault();
-    event.stopPropagation();
-    menuEl.textContent = '';
-    for (const item of items) {
-      if (item === '-') {
-        menuEl.appendChild(el('div', 'separator'));
-        continue;
-      }
-      const row = el('div', 'item', item.label);
-      row.addEventListener('click', function () {
-        hideMenu();
-        item.run();
-      });
-      menuEl.appendChild(row);
-    }
-    menuEl.hidden = false;
-    const rect = menuEl.getBoundingClientRect();
-    menuEl.style.left = Math.min(event.clientX, Math.max(0, window.innerWidth - rect.width - 4)) + 'px';
-    menuEl.style.top = Math.min(event.clientY, Math.max(0, window.innerHeight - rect.height - 4)) + 'px';
+    dom.showMenu(menuEl, event, items);
   }
 
   function hideMenu() {
-    menuEl.hidden = true;
+    dom.hideMenu(menuEl);
   }
-
-  document.addEventListener('click', hideMenu);
-  window.addEventListener('blur', hideMenu);
 
   // ------------------------------------------------------------ graph drawing
-
-  function laneX(lane) {
-    return 8 + lane * LANE_W;
-  }
-
-  function color(index) {
-    return 'var(--vsg-lane-' + (((index % LANE_COLORS) + LANE_COLORS) % LANE_COLORS) + ')';
-  }
 
   function path(d, stroke) {
     const node = document.createElementNS(SVG_NS, 'path');
@@ -172,10 +128,6 @@
     node.setAttribute('stroke-width', '1.6');
     node.setAttribute('fill', 'none');
     return node;
-  }
-
-  function graphWidth(maxLanes) {
-    return Math.max(laneX(maxLanes - 1) + 10, 28);
   }
 
   /**
@@ -483,30 +435,6 @@
     return !state.treeClosed.has(key);
   }
 
-  /**
-   * Nests refs on "/" so feature/x sits under a "feature" node. `displayOf`
-   * gives the path to nest by, which lets origin/feature/x nest under the
-   * remote's own node while the leaf keeps its real ref name for checkout.
-   */
-  function nest(refs, displayOf) {
-    const tree = { dirs: new Map(), leaves: [] };
-    for (const ref of refs) {
-      const segments = displayOf(ref).split('/');
-      const name = segments.pop();
-      let node = tree;
-      for (const segment of segments) {
-        let next = node.dirs.get(segment);
-        if (!next) {
-          next = { dirs: new Map(), leaves: [] };
-          node.dirs.set(segment, next);
-        }
-        node = next;
-      }
-      node.leaves.push({ ref, name });
-    }
-    return tree;
-  }
-
   function renderNested(container, node, depth, keyPrefix) {
     const dirs = [...node.dirs.entries()].sort(function (a, b) {
       return a[0].localeCompare(b[0]);
@@ -622,7 +550,7 @@
 
       if (repoOpen) {
         const heads = refs.filter(function (r) { return r.kind === 'head'; });
-        renderNested(scroll, nest(heads, function (r) { return r.short; }), 2, 'heads');
+        renderNested(scroll, graphView.nestRefs(heads, function (r) { return r.short; }), 2, 'heads');
 
         const remotes = refs.filter(function (r) { return r.kind === 'remote'; });
         if (remotes.length) {
@@ -653,7 +581,7 @@
               // appears as feature > x while the leaf keeps "origin/feature/x".
               renderNested(
                 scroll,
-                nest(list, function (r) {
+                graphView.nestRefs(list, function (r) {
                   return r.short.substring(remote.length + 1);
                 }),
                 3,
@@ -678,7 +606,7 @@
           });
           scroll.appendChild(row);
           if (open) {
-            renderNested(scroll, nest(tags, function (r) { return r.short; }), 3, 'tags');
+            renderNested(scroll, graphView.nestRefs(tags, function (r) { return r.short; }), 3, 'tags');
           }
         }
       }
@@ -753,19 +681,6 @@
     fillRows(rows);
     rows.scrollTop = scrollTop;
     syncWindows();
-  }
-
-  function matches(row) {
-    const needle = state.filter.trim().toLowerCase();
-    if (!needle) {
-      return true;
-    }
-    const commit = row.commit;
-    return (
-      commit.subject.toLowerCase().indexOf(needle) !== -1 ||
-      commit.author.toLowerCase().indexOf(needle) !== -1 ||
-      commit.hash.toLowerCase().indexOf(needle) !== -1
-    );
   }
 
   /**
@@ -912,59 +827,22 @@
     return header;
   }
 
-  function formatDate(iso) {
-    const date = new Date(iso);
-    if (isNaN(date.getTime())) {
-      return iso;
-    }
-    return (
-      date.toLocaleDateString() +
-      ' ' +
-      date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
-    );
-  }
-
   const MAX_CHIPS = 2;
 
   function refChips(commit) {
     const wrap = el('div', 'chips');
-    // A commit that several branches point at would otherwise fill the column;
-    // show the first few and fold the rest into a "+n" chip.
-    // Rank so the checked-out branch and tags survive the cap ahead of the
-    // remote-tracking refs, which are the least interesting to see here.
-    const RANK = { current: 0, local: 1, tag: 2, remote: 3 };
-    const classified = commit.refs
-      .map(function (raw) {
-        if (raw.indexOf('HEAD -> ') === 0) {
-          return { raw: raw, label: raw.substring(8), kind: 'current' };
-        }
-        if (raw === 'HEAD') {
-          return { raw: raw, label: raw, kind: 'current' };
-        }
-        if (raw.indexOf('tag: ') === 0) {
-          return { raw: raw, label: raw.substring(5), kind: 'tag' };
-        }
-        return { raw: raw, label: raw, kind: raw.indexOf('/') !== -1 ? 'remote' : 'local' };
-      })
-      .sort(function (a, b) {
-        return RANK[a.kind] - RANK[b.kind];
-      });
+    const ranked = graphView.rankRefs(commit.refs, MAX_CHIPS);
 
-    const shown = classified.slice(0, MAX_CHIPS);
-    const hidden = classified.slice(MAX_CHIPS).map(function (c) { return c.raw; });
-    for (const entry of shown) {
-      const raw = entry.raw;
-      const label = entry.label;
-      const kind = entry.kind;
-      const chip = el('span', 'chip ' + kind);
-      chip.appendChild(icon(kind === 'tag' ? 'tag' : 'git-branch'));
-      chip.appendChild(el('span', null, label));
-      chip.title = raw;
+    for (const entry of ranked.shown) {
+      const chip = el('span', 'chip ' + entry.kind);
+      chip.appendChild(icon(entry.kind === 'tag' ? 'tag' : 'git-branch'));
+      chip.appendChild(el('span', null, entry.label));
+      chip.title = entry.raw;
       wrap.appendChild(chip);
     }
-    if (hidden.length) {
-      const more = el('span', 'chip remote', '+' + hidden.length);
-      more.title = hidden.join('\n');
+    if (ranked.hidden.length) {
+      const more = el('span', 'chip remote', '+' + ranked.hidden.length);
+      more.title = ranked.hidden.join(String.fromCharCode(10));
       wrap.appendChild(more);
     }
     return wrap;

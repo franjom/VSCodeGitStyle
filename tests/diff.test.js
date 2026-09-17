@@ -3,8 +3,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { Git } = require('../out/git.js');
-const { parseUnifiedDiff, intraLineSpans, readFileDiff } = require('../out/diff.js');
+const { Git } = require('../out/git/git.js');
+const { parseUnifiedDiff, intraLineSpans, readFileDiff } = require('../out/git/diff.js');
 const { TestRepo } = require('./helpers.js');
 
 const git = new Git('git');

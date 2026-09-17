@@ -6,6 +6,9 @@
   const root = document.getElementById('root');
   const menuEl = document.getElementById('menu');
 
+  const dom = self.VsgDom;
+  const changesView = self.VsgChangesView;
+
   const persisted = vscode.getState() || {};
 
   /** @type {{model: any, expanded: Set<string>, sections: Record<string, boolean>, message: string, amend: boolean, selected: string|null, busy: boolean, generating: boolean, error: string|null}} */
@@ -37,90 +40,24 @@
   }
 
   // ------------------------------------------------------------- dom helpers
+  //
+  // The construction itself lives in media/dom.js, shared with the Git
+  // Repository window. These are the local names the rendering below reads
+  // with, plus the one binding dom.js cannot make for us: which element is
+  // this view's menu.
 
-  function el(tag, className, text) {
-    const node = document.createElement(tag);
-    if (className) {
-      node.className = className;
-    }
-    if (text !== undefined && text !== null) {
-      node.textContent = text;
-    }
-    return node;
-  }
-
-  function icon(name, extraClass) {
-    const node = el('i', 'codicon codicon-' + name + (extraClass ? ' ' + extraClass : ''));
-    node.setAttribute('aria-hidden', 'true');
-    return node;
-  }
-
-  function iconButton(codicon, title, onClick, disabled) {
-    const button = el('button', 'icon-btn');
-    button.title = title;
-    button.setAttribute('aria-label', title);
-    button.appendChild(icon(codicon));
-    if (disabled) {
-      button.disabled = true;
-    }
-    button.addEventListener('click', function (event) {
-      event.stopPropagation();
-      onClick(event);
-    });
-    return button;
-  }
-
-  function link(text, onClick) {
-    const node = el('a', 'link', text);
-    node.addEventListener('click', function (event) {
-      event.stopPropagation();
-      onClick();
-    });
-    return node;
-  }
-
-  // ---------------------------------------------------------- context menus
+  const el = dom.el;
+  const icon = dom.icon;
+  const iconButton = dom.iconButton;
+  const link = dom.link;
 
   function showMenu(event, items) {
-    event.preventDefault();
-    event.stopPropagation();
-    menuEl.textContent = '';
-    for (const item of items) {
-      if (item === '-') {
-        menuEl.appendChild(el('div', 'separator'));
-        continue;
-      }
-      const row = el('div', 'item');
-      // Visual Studio's menus lead with an icon column, and the entries without
-      // one still line up with it, so the slot is always there.
-      row.appendChild(item.icon ? icon(item.icon, 'menu-icon') : el('span', 'menu-icon'));
-      row.appendChild(el('span', null, item.label));
-      row.addEventListener('click', function () {
-        hideMenu();
-        item.run();
-      });
-      menuEl.appendChild(row);
-    }
-    menuEl.hidden = false;
-    // Measure, then clamp inside the view.
-    const rect = menuEl.getBoundingClientRect();
-    const x = Math.min(event.clientX, Math.max(0, window.innerWidth - rect.width - 4));
-    const y = Math.min(event.clientY, Math.max(0, window.innerHeight - rect.height - 4));
-    menuEl.style.left = x + 'px';
-    menuEl.style.top = y + 'px';
+    dom.showMenu(menuEl, event, items);
   }
 
   function hideMenu() {
-    menuEl.hidden = true;
+    dom.hideMenu(menuEl);
   }
-
-  document.addEventListener('click', hideMenu);
-  document.addEventListener('contextmenu', function (event) {
-    if (!event.target.closest('[data-menu]')) {
-      hideMenu();
-    }
-  });
-  window.addEventListener('blur', hideMenu);
 
   // --------------------------------------------------------------- rendering
 
@@ -430,7 +367,11 @@
 
     // One button that does whichever of the two is useful right now: folders
     // start expanded, so a collapse-all with no way back would be a trap.
-    const folderKeys = collectFolderKeys(nodes, prefix, [prefix + '#repo']);
+    // The repository node heads the list: it is a row that collapses like a
+    // folder without being one in the tree.
+    const folderKeys = [prefix + '#repo'].concat(
+      changesView.collectFolderKeys(nodes, prefix)
+    );
     const anyCollapsed = folderKeys.some(function (key) {
       return state.collapsedNodes.has(key);
     });
@@ -609,16 +550,6 @@
   }
 
   /** Every folder key in a section, for the collapse/expand-all button. */
-  function collectFolderKeys(nodes, prefix, out) {
-    for (const node of nodes) {
-      if (node.kind === 'folder') {
-        out.push(prefix + node.key);
-        collectFolderKeys(node.children, prefix, out);
-      }
-    }
-    return out;
-  }
-
   function row(kind, depth, open, label, codicon, statusClass) {
     const node = el('div', 'row ' + kind);
     node.setAttribute('role', 'treeitem');
@@ -711,15 +642,6 @@
     return map;
   })();
 
-  function extensionOf(name) {
-    const lower = name.toLowerCase();
-    // Dotfiles such as .gitignore have no extension; their whole name is one.
-    if (lower.indexOf('.') <= 0) {
-      return lower.replace(/^\./, '');
-    }
-    return lower.slice(lower.lastIndexOf('.') + 1);
-  }
-
   function fileTypeNode(name) {
     const lower = name.toLowerCase();
     if (lower.indexOf('.git') === 0 || lower === 'gitignore' || lower === 'gitattributes') {
@@ -733,7 +655,7 @@
       return wrap;
     }
 
-    const ext = extensionOf(name);
+    const ext = changesView.extensionOf(name);
     const codicon = ICON_TYPE_MAP.get(ext);
     if (codicon) {
       const wrap = el('span', 'icon');

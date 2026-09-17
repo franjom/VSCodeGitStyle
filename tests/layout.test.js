@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { layout } = require('../out/graph.js');
+const { layout } = require('../out/git/graph.js');
 const { commit, assertLaneContinuity, assertLanesInRange } = require('./helpers.js');
 
 const NO_SET = new Set();

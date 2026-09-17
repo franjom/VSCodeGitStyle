@@ -15,8 +15,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const ROOT = path.resolve(__dirname, '..');
-const GIT_TS = path.join(ROOT, 'src', 'git.ts');
-const GRAPH_TS = path.join(ROOT, 'src', 'graph.ts');
+const GIT_TS = path.join(ROOT, 'src', 'git', 'git.ts');
+const GRAPH_TS = path.join(ROOT, 'src', 'git', 'graph.ts');
 const VIRTUAL_JS = path.join(ROOT, 'media', 'virtual.js');
 
 const MUTATIONS = [

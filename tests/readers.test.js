@@ -1,10 +1,17 @@
 'use strict';
 
+/*
+ * The readers - snapshot, readGraph, readRefs, readCommitDetails,
+ * readReviewInfo - exercised by running real git against a repository built for
+ * the purpose. Anything that can be decided from captured output instead is a
+ * parser, and lives in parse.test.js.
+ */
+
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { countChanges, Git } = require('../out/git.js');
-const { readGraph, readRefs, readCommitDetails, readReviewInfo } = require('../out/graph.js');
+const { countChanges, Git } = require('../out/git/git.js');
+const { readGraph, readRefs, readCommitDetails, readReviewInfo } = require('../out/git/graph.js');
 const { TestRepo, assertLaneContinuity, assertLanesInRange } = require('./helpers.js');
 
 const git = new Git('git');

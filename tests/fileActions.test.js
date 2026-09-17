@@ -11,8 +11,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { Git } = require('../out/git.js');
-const { readGraph } = require('../out/graph.js');
+const { Git } = require('../out/git/git.js');
+const { readGraph } = require('../out/git/graph.js');
 const { TestRepo } = require('./helpers.js');
 
 const git = new Git('git');

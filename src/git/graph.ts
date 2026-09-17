@@ -4,7 +4,7 @@
  * node against a real repository.
  */
 
-import { Git } from './git';
+import { Git } from '../git/git';
 
 export interface RawCommit {
   hash: string;

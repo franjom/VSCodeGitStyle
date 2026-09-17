@@ -1,8 +1,8 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { countChanges, Git, RepoSnapshot } from './git';
-import { ApiRepository, GitApi } from './gitExtension';
-import { buildTree, TreeNode } from './tree';
+import { countChanges, Git, RepoSnapshot } from '../git/git';
+import { ApiRepository, GitApi } from '../gitExtension';
+import { buildTree, TreeNode } from '../git/tree';
 
 /** VS Code's own git blame toggle, present from 1.96. */
 const BLAME_COMMAND = 'git.blame.toggleEditorDecoration';
@@ -697,12 +697,16 @@ export class ChangesViewProvider implements vscode.WebviewViewProvider {
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource}; font-src ${webview.cspSource}; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link href="${asset('codicon.css')}" rel="stylesheet">
+<link href="${asset('shell.css')}" rel="stylesheet">
 <link href="${asset('main.css')}" rel="stylesheet">
 <title>Git Changes</title>
 </head>
 <body>
 <div id="root" class="shell"></div>
 <div id="menu" class="context-menu" hidden></div>
+<script nonce="${nonce}" src="${asset('format.js')}"></script>
+<script nonce="${nonce}" src="${asset('dom.js')}"></script>
+<script nonce="${nonce}" src="${asset('changesview.js')}"></script>
 <script nonce="${nonce}" src="${asset('main.js')}"></script>
 </body>
 </html>`;

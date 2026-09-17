@@ -3,14 +3,14 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { parseStatus } = require('../out/git.js');
+const { parseStatus } = require('../out/git/git.js');
 const {
   parseLog,
   parseNameStatus,
   remoteHost,
   providerFromHost,
   labelForProvider,
-} = require('../out/graph.js');
+} = require('../out/git/graph.js');
 const { NUL, porcelain } = require('./helpers.js');
 
 const UNIT = String.fromCharCode(31);

@@ -87,12 +87,12 @@ A `WebviewPanel` in the editor area.
 | `Pull Requests` node | placeholder; labelled `Merge Requests` for GitLab, see `vsGitStyle.reviewProvider` |
 | `Incoming (n)` group with Fetch / Pull links | done |
 | `Local History (n Outgoing)` group with Push / Sync links | done |
-| Commit graph with coloured lanes and merge curves | done, SVG, lanes computed in [src/graph.ts](src/graph.ts) |
+| Commit graph with coloured lanes and merge curves | done, SVG, lanes computed in [src/git/graph.ts](src/git/graph.ts) |
 | Branch / Tag chips per commit | done, ranked so the current branch and tags survive the cap |
 | Message / Author / Date / ID columns | done |
 | Click to select | done, fills the commit details pane |
 | Commit details pane | done: docked across the bottom, with a side-by-side diff of the selected file, change navigation, and a metadata rail holding the message, author/committer, clickable parents, refs and a folder tree of the changed files |
-| Side-by-side diff inside the pane | done: whole file on both sides, synced vertical scroll, word-level highlight inside an edited line, `↑` `↓` between changes, `-n` `+n` tallies ([src/diff.ts](src/diff.ts), [media/diffview.js](media/diffview.js)) |
+| Side-by-side diff inside the pane | done: whole file on both sides, synced vertical scroll, word-level highlight inside an edited line, `↑` `↓` between changes, `-n` `+n` tallies ([src/git/diff.ts](src/git/diff.ts), [media/diffview.js](media/diffview.js)) |
 | Syntax colouring in the diff | done, [media/syntax.js](media/syntax.js): a lexer for comments, strings, numbers and keywords across the C family, Python, Ruby, shell, SQL, CSS/SCSS, JSON, YAML and XML/HTML; block comments and docstrings carry across lines, and a file with no lexer is left plain rather than guessed at |
 | Click a file in the pane | done, shows its diff in the pane; double-click opens a real editor diff at that commit via the `vsgitstyle-blob:` scheme |
 | Double-click a commit | done, opens the whole commit as a read-only patch |
@@ -106,7 +106,7 @@ A `WebviewPanel` in the editor area.
 ### How the graph is computed
 
 `git log --date-order` supplies each commit's hash, parents, author, date, refs
-and subject. [src/graph.ts](src/graph.ts) then assigns lanes: `lanes[i]` holds
+and subject. [src/git/graph.ts](src/git/graph.ts) then assigns lanes: `lanes[i]` holds
 the hash lane `i` is waiting for, a lane is created for a branch tip or an extra
 merge parent, and freed once its commit is emitted. Lane indices are never
 compacted, so a line that merely passes a row keeps the same x on both edges and

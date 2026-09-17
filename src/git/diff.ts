@@ -9,7 +9,7 @@
  * falls back to real hunks separated by gap rows.
  */
 
-import { Git } from './git';
+import { Git } from '../git/git';
 
 /** A half-open `[start, end)` range of characters within a line. */
 export type Span = [number, number];
