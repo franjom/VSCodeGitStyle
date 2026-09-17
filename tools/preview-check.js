@@ -460,6 +460,50 @@ function railScrollAcrossFileClick() {
   });
 }
 
+/**
+ * Opens the generated file, whose every line changed, and reports what that
+ * costs. A diff this dense used to be built in full - 20,000 rows in each
+ * column - which wedged the window; the point of the check is that what
+ * reaches the DOM follows the viewport, not the file.
+ */
+function inspectDenseDiff() {
+  const files = [...document.querySelectorAll('.changes .tree-row.change-file')];
+  const target = files.find(function (row) {
+    return row.querySelector('.label').textContent.indexOf('designer') !== -1;
+  });
+  const started = performance.now();
+  target.click();
+  return settle()
+    .then(settle)
+    .then(settle)
+    .then(function () {
+      const elapsed = Math.round(performance.now() - started);
+      const sides = [...document.querySelectorAll('.diff-side')];
+      const host = sides[0].querySelector('.diff-rows');
+      const rendered = sides.map(function (side) {
+        return side.querySelectorAll('.diff-row').length;
+      });
+
+      // Halfway down, to prove the window moves rather than just starting small.
+      sides[0].scrollTop = Math.round(sides[0].scrollHeight / 2);
+      return settle()
+        .then(settle)
+        .then(function () {
+          const firstNo = host.querySelector('.diff-row .ln');
+          return {
+            elapsed: elapsed,
+            rendered: rendered,
+            nodes: document.querySelectorAll('.diff-row').length,
+            scrollHeight: sides[0].scrollHeight,
+            followerTop: sides[1].scrollTop,
+            leaderTop: sides[0].scrollTop,
+            firstLineNo: firstNo ? Number(firstNo.textContent) : -1,
+            changes: (document.querySelector('.details-toolbar .count') || {}).textContent,
+          };
+        });
+    });
+}
+
 /** Selects the first changed file, so the screenshot shows a representative diff. */
 function selectFirstFile() {
   const first = document.querySelector('.changes .tree-row.change-file');
@@ -846,6 +890,35 @@ async function main() {
       'clicking a file selects that file',
       rail.selected === rail.clicked,
       'clicked ' + rail.clicked + ', selected ' + rail.selected
+    );
+
+    // 20,000 rows a side: the whole point is that the DOM does not grow with
+    // the file. A generous ceiling - what matters is that it is a ceiling.
+    const dense = await evaluate(cdp, inspectDenseDiff);
+    check(
+      'a whole-file diff of 20,000 changed lines stays bounded',
+      dense.nodes > 0 && dense.nodes < 400,
+      dense.nodes + ' rows in the DOM across both columns (' + dense.rendered.join(' + ') + ')'
+    );
+    check(
+      'and it opens promptly',
+      dense.elapsed < 2000,
+      dense.elapsed + ' ms from click to drawn'
+    );
+    check(
+      'the scrollbar still spans the whole file',
+      dense.scrollHeight > 20000 * 18 * 0.9,
+      dense.scrollHeight + 'px of an expected ' + 20000 * 18 + 'px'
+    );
+    check(
+      'scrolling into the middle brings up the rows that belong there',
+      dense.firstLineNo > 9000 && dense.firstLineNo < 11000,
+      'first row on screen is line ' + dense.firstLineNo
+    );
+    check(
+      'and the other column follows it',
+      dense.followerTop === dense.leaderTop,
+      dense.leaderTop + 'px then ' + dense.followerTop + 'px'
     );
 
     const cleared = await evaluate(cdp, applyFilter, '');

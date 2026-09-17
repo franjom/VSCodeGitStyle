@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
-  collapseRows,
+  widestLine,
   changeAnchors,
   currentAnchor,
   buildFileTree,
@@ -21,64 +21,27 @@ function gap(skipped) {
   return { kind: 'gap', oldNo: null, newNo: null, oldText: null, newText: null, skipped: skipped };
 }
 
-function rowsWithChangeAt(total, at) {
-  const rows = [];
-  for (let i = 1; i <= total; i++) {
-    rows.push(i === at ? change(i) : same(i));
-  }
-  return rows;
-}
+// ------------------------------------------------------------ column width
 
-// --------------------------------------------------------------- collapsing
-
-test('a diff within the cap keeps every line of context', () => {
-  const rows = rowsWithChangeAt(50, 25);
-  assert.equal(collapseRows(rows, 4000), rows, 'the same array, not a copy');
+test('the widest line decides the column width', () => {
+  assert.equal(widestLine(['ab', 'abcdef', 'abc'], 4), 6);
 });
 
-test('a long file collapses to the changes and their surroundings', () => {
-  const rows = rowsWithChangeAt(1000, 500);
-  const out = collapseRows(rows, 100);
-
-  // 12 rows either side of the change, plus the change, plus a gap at each end.
-  assert.equal(out.length, 27);
-  assert.equal(out[0].kind, 'gap');
-  assert.equal(out[out.length - 1].kind, 'gap');
-  assert.ok(
-    out.some((r) => r.kind === 'change'),
-    'the change itself survives'
-  );
+test('a tab advances to the next stop rather than counting as one', () => {
+  assert.equal(widestLine(['	x'], 4), 5, 'tab fills to column 4, then x');
+  assert.equal(widestLine(['ab	x'], 4), 5, 'a tab at column 2 still lands on 4');
+  assert.equal(widestLine(['abcd	x'], 4), 9, 'a tab on a stop advances a whole one');
 });
 
-test('every line of the file is accounted for after collapsing', () => {
-  const rows = rowsWithChangeAt(1000, 500);
-  const out = collapseRows(rows, 100);
-
-  const shown = out.filter((r) => r.kind !== 'gap').length;
-  const elided = out.reduce((sum, r) => sum + (r.kind === 'gap' ? r.skipped : 0), 0);
-  assert.equal(shown + elided, 1000, 'nothing is lost or double counted');
+test('blank and missing lines do not count', () => {
+  assert.equal(widestLine(['', null, 'abc'], 4), 3);
+  assert.equal(widestLine([], 4), 0);
+  assert.equal(widestLine([null, null], 4), 0);
 });
 
-test('two distant changes each keep their own context', () => {
-  const rows = [];
-  for (let i = 1; i <= 1000; i++) {
-    rows.push(i === 100 || i === 900 ? change(i) : same(i));
-  }
-  const out = collapseRows(rows, 100);
-
-  assert.equal(out.filter((r) => r.kind === 'change').length, 2);
-  assert.equal(out.filter((r) => r.kind === 'gap').length, 3, 'before, between and after');
-});
-
-test("a gap the parser produced keeps its own count through a collapse", () => {
-  const rows = [change(1), gap(500)];
-  for (let i = 0; i < 200; i++) {
-    rows.push(same(i + 502));
-  }
-  const out = collapseRows(rows, 10);
-
-  const elided = out.reduce((sum, r) => sum + (r.kind === 'gap' ? r.skipped : 0), 0);
-  assert.ok(elided >= 500, 'the 500 lines git never sent are still reported as missing');
+test('an absent tab size falls back to four', () => {
+  assert.equal(widestLine(['	x'], 0), 5);
+  assert.equal(widestLine(['	x'], undefined), 5);
 });
 
 // -------------------------------------------------------------- navigation

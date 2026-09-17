@@ -6,73 +6,36 @@
 (function (scope) {
   'use strict';
 
-  /** Rows of unchanged context kept on each side of a change when collapsing. */
-  const KEEP_CONTEXT = 12;
-
   function isChanged(row) {
     return row.kind === 'add' || row.kind === 'del' || row.kind === 'change';
   }
 
   /**
-   * Caps how many rows the view has to build.
+   * How many character cells the widest of these lines occupies, with tabs
+   * advancing to the next multiple of `tabSize`.
    *
-   * A whole-file diff is what makes the two sides read as documents, but a very
-   * long file would put tens of thousands of rows in the DOM for the sake of a
-   * few changed lines. Past `maxRows` the unchanged stretches far from any
-   * change collapse into the same gap rows the parser already emits when git
-   * elides a region, so the view has one shape to draw either way.
-   *
-   * A diff already within the cap is returned untouched - the common case, and
-   * the one where every line of context is worth keeping.
+   * The diff is drawn in the editor's monospace font, so this is the column's
+   * width in `ch` units. Stating it outright is what lets the view virtualize:
+   * `width: max-content` would make the browser measure every row, including
+   * the thousands that are not on screen, which is the one thing windowing
+   * exists to avoid.
    */
-  function collapseRows(rows, maxRows) {
-    const limit = Math.max(1, maxRows || 0);
-    if (rows.length <= limit) {
-      return rows;
-    }
-
-    const keep = new Array(rows.length).fill(false);
-    for (let i = 0; i < rows.length; i++) {
-      if (!isChanged(rows[i])) {
+  function widestLine(lines, tabSize) {
+    const tab = tabSize > 0 ? tabSize : 4;
+    let widest = 0;
+    for (const line of lines) {
+      if (!line) {
         continue;
       }
-      const from = Math.max(0, i - KEEP_CONTEXT);
-      const to = Math.min(rows.length - 1, i + KEEP_CONTEXT);
-      for (let j = from; j <= to; j++) {
-        keep[j] = true;
+      let width = 0;
+      for (let i = 0; i < line.length; i++) {
+        width = line[i] === '\t' ? width + tab - (width % tab) : width + 1;
+      }
+      if (width > widest) {
+        widest = width;
       }
     }
-
-    const out = [];
-    let skipped = 0;
-    for (let i = 0; i < rows.length; i++) {
-      if (keep[i]) {
-        if (skipped > 0) {
-          out.push(gapRow(skipped));
-          skipped = 0;
-        }
-        out.push(rows[i]);
-        continue;
-      }
-      // A gap row the parser produced stands for lines git never sent, so its
-      // own count has to survive the collapse rather than being counted as one.
-      skipped += rows[i].kind === 'gap' ? rows[i].skipped || 0 : 1;
-    }
-    if (skipped > 0) {
-      out.push(gapRow(skipped));
-    }
-    return out;
-  }
-
-  function gapRow(skipped) {
-    return {
-      kind: 'gap',
-      oldNo: null,
-      newNo: null,
-      oldText: null,
-      newText: null,
-      skipped: skipped,
-    };
+    return widest;
   }
 
   /**
@@ -206,7 +169,7 @@
   }
 
   const api = {
-    collapseRows: collapseRows,
+    widestLine: widestLine,
     changeAnchors: changeAnchors,
     currentAnchor: currentAnchor,
     buildFileTree: buildFileTree,

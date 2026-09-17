@@ -16,10 +16,12 @@
   // the stylesheet rather than being written down in both places.
   const CODE_ROW_H = 18;
 
-  // Beyond this many diff rows the unchanged stretches are collapsed. Large
-  // enough that an ordinary source file is shown whole, small enough that a
-  // generated one does not put tens of thousands of rows in the DOM.
-  const MAX_DIFF_ROWS = 4000;
+  // The line-number gutter, which the column's stated width has to allow for
+  // on top of the code itself. Matches .diff-row .ln in repo.css.
+  const LN_WIDTH = 64;
+
+  // Matches `tab-size` on .diff-side; used to work out how wide a line is.
+  const TAB_SIZE = 4;
 
   // Rows kept in the DOM beyond each edge of the viewport, so a small scroll is
   // already covered by the time the next frame runs.
@@ -54,6 +56,10 @@
     fileDiff: null,
     fileDiffError: null,
     fileDiffLoading: false,
+    // Derived from fileDiff once, by prepareFileDiff(), because the pane is
+    // rebuilt far more often than the file changes.
+    fileHighlights: null,
+    fileWidths: null,
     changesClosed: new Set(persisted.changesClosed || []),
   };
 
@@ -1029,6 +1035,7 @@
     state.fileDiff = null;
     state.fileDiffError = null;
     state.fileDiffLoading = false;
+    prepareFileDiff();
     post({ type: 'selectCommit', hash: hash });
     renderRowsOnly();
     renderDetailsOnly();
@@ -1154,19 +1161,20 @@
 
   // ------------------------------------------------------------------- diff
 
-  /** The rows actually drawn, which is the parsed diff after any collapsing. */
-  function diffRows() {
-    const diff = state.fileDiff;
-    if (!diff || !diff.rows.length) {
-      return [];
-    }
-    return diffView.collapseRows(diff.rows, MAX_DIFF_ROWS);
-  }
+  /**
+   * The two columns, so one scroll can refill both from a single range. They
+   * hold the same rows at the same height, so sharing the range is what keeps
+   * a deletion exactly opposite the line that replaced it.
+   */
+  let diffPanes = [];
+
+  /** Where the ↑ ↓ buttons step, computed once per file rather than per frame. */
+  let diffAnchors = [];
 
   function renderDiffToolbar(d) {
     const bar = el('div', 'details-toolbar');
     const diff = state.fileDiff;
-    const anchors = diff ? diffView.changeAnchors(diffRows()) : [];
+    const count = diffAnchors.length;
 
     bar.appendChild(
       iconButton(
@@ -1175,7 +1183,7 @@
         function () {
           gotoChange(-1);
         },
-        anchors.length === 0
+        count === 0
       )
     );
     bar.appendChild(
@@ -1185,11 +1193,10 @@
         function () {
           gotoChange(1);
         },
-        anchors.length === 0
+        count === 0
       )
     );
 
-    const count = anchors.length;
     bar.appendChild(el('span', 'count', count === 1 ? '1 change' : count + ' changes'));
     if (diff) {
       bar.appendChild(el('span', 'tally minus', '-' + diff.removed));
@@ -1215,6 +1222,7 @@
 
   function renderDiffArea(d) {
     const area = el('div', 'diff-area');
+    diffPanes = [];
 
     if (!state.detailsFile) {
       area.appendChild(el('div', 'placeholder', 'Select a file to see its changes.'));
@@ -1233,7 +1241,7 @@
       return area;
     }
 
-    const rows = diffRows();
+    const rows = state.fileDiff.rows;
     if (!rows.length) {
       area.appendChild(el('div', 'placeholder', 'No changes in this file.'));
       return area;
@@ -1249,8 +1257,8 @@
     area.appendChild(titles);
 
     const scroll = el('div', 'diff-scroll');
-    scroll.appendChild(renderDiffSide(rows, 'old'));
-    scroll.appendChild(renderDiffSide(rows, 'new'));
+    scroll.appendChild(renderDiffSide(rows, true));
+    scroll.appendChild(renderDiffSide(rows, false));
     area.appendChild(scroll);
 
     if (state.fileDiff.truncated) {
@@ -1262,66 +1270,140 @@
   }
 
   /**
-   * One column of the diff. Both columns hold exactly the same number of rows,
-   * each a fixed height, which is what lets the two scroll in step and what
-   * keeps a deleted line opposite the line that replaced it.
+   * One column of the diff, as an empty window that syncDiffWindows() fills.
+   *
+   * Nothing is built here: a reformatted file is tens of thousands of rows, and
+   * putting them all in the DOM is what wedged the window before this was
+   * windowed. The column's width is stated outright in `ch` rather than left to
+   * `max-content`, which would make the browser measure every row and undo the
+   * saving.
    */
-  function renderDiffSide(rows, side) {
+  function renderDiffSide(rows, isOld) {
     const column = el('div', 'diff-side');
-    column.dataset.side = side;
-    const list = el('div', 'diff-rows');
-    const isOld = side === 'old';
+    column.dataset.side = isOld ? 'old' : 'new';
 
-    // Colouring is done for the side in one pass rather than line by line: a
-    // block comment or a docstring only makes sense in the context of the lines
-    // above it. A renamed file may well change language, so each side asks
-    // about its own name.
-    const named = isOld ? state.fileDiff.origPath || state.fileDiff.path : state.fileDiff.path;
-    const highlights = syntax.highlightLines(
-      rows.map(function (row) {
-        return isOld ? row.oldText : row.newText;
-      }),
-      syntax.languageFor(named)
-    );
+    const host = el('div', 'diff-rows');
+    host.style.width = 'calc(' + LN_WIDTH + 'px + ' + (widestOf(isOld) + 2) + 'ch)';
+    column.appendChild(host);
 
-    let at = -1;
-    for (const row of rows) {
-      at++;
-      const text = isOld ? row.oldText : row.newText;
-      const lineNo = isOld ? row.oldNo : row.newNo;
+    diffPanes.push({
+      host: host,
+      rows: rows,
+      isOld: isOld,
+      highlights: state.fileHighlights ? (isOld ? state.fileHighlights.old : state.fileHighlights.new) : null,
+      start: -1,
+      end: -1,
+    });
+    return column;
+  }
 
-      let kind = row.kind;
-      if (row.kind !== 'gap' && text === null) {
-        // The blank standing opposite a line this side does not have.
-        kind = 'empty';
-      } else if (row.kind === 'add' || row.kind === 'del' || row.kind === 'change') {
-        // An edited line reads as removed on the left and added on the right;
-        // the word highlight inside it says what actually moved.
-        kind = isOld ? 'del' : 'add';
+  function widestOf(isOld) {
+    const widths = state.fileWidths;
+    if (!widths) {
+      return 80;
+    }
+    return isOld ? widths.old : widths.new;
+  }
+
+  /**
+   * Builds the rows now on screen, into both columns, from one range.
+   *
+   * The padding above and below stands in for the rows that are not built, so
+   * the scrollbar reflects the whole file and a row keeps its place under the
+   * pointer. Each refill is a no-op unless the range actually moved.
+   */
+  function syncDiffWindows() {
+    if (!diffPanes.length) {
+      return;
+    }
+    const scroller = root.querySelector('.diff-side');
+    if (!scroller) {
+      return;
+    }
+    const range = visibleRange({
+      total: diffPanes[0].rows.length,
+      rowHeight: CODE_ROW_H,
+      overscan: OVERSCAN,
+      offset: 0,
+      scrollTop: scroller.scrollTop,
+      viewportHeight: scroller.clientHeight,
+    });
+
+    for (const pane of diffPanes) {
+      if (pane.start === range.start && pane.end === range.end) {
+        continue;
       }
-
-      const node = el('div', 'diff-row k-' + kind);
-      node.appendChild(el('span', 'ln', lineNo === null ? '' : String(lineNo)));
-
-      if (row.kind === 'gap') {
-        const skipped = row.skipped || 0;
-        node.appendChild(
-          el(
-            'span',
-            'code gap-label',
-            skipped === 1 ? '1 unchanged line' : skipped + ' unchanged lines'
-          )
-        );
-      } else {
-        node.appendChild(
-          renderCode(text, isOld ? row.oldSpans : row.newSpans, highlights[at])
-        );
+      pane.start = range.start;
+      pane.end = range.end;
+      pane.host.textContent = '';
+      pane.host.style.paddingTop = range.start * CODE_ROW_H + 'px';
+      pane.host.style.paddingBottom = (pane.rows.length - range.end) * CODE_ROW_H + 'px';
+      for (let i = range.start; i < range.end; i++) {
+        pane.host.appendChild(diffRow(pane, i));
       }
-      list.appendChild(node);
+    }
+  }
+
+  let diffSyncQueued = false;
+
+  function queueDiffSync() {
+    if (diffSyncQueued) {
+      return;
+    }
+    diffSyncQueued = true;
+    requestAnimationFrame(function () {
+      diffSyncQueued = false;
+      syncDiffWindows();
+    });
+  }
+
+  // Same reasoning as the commit list's observer: how many rows are needed
+  // follows the scroller's height, which the dividers and the maximize button
+  // change without the window ever being resized.
+  const diffObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(queueDiffSync) : null;
+  if (!diffObserver) {
+    window.addEventListener('resize', queueDiffSync);
+  }
+
+  /** One row of one column. */
+  function diffRow(pane, index) {
+    const row = pane.rows[index];
+    const isOld = pane.isOld;
+    const text = isOld ? row.oldText : row.newText;
+    const lineNo = isOld ? row.oldNo : row.newNo;
+
+    let kind = row.kind;
+    if (row.kind !== 'gap' && text === null) {
+      // The blank standing opposite a line this side does not have.
+      kind = 'empty';
+    } else if (row.kind === 'add' || row.kind === 'del' || row.kind === 'change') {
+      // An edited line reads as removed on the left and added on the right;
+      // the word highlight inside it says what actually moved.
+      kind = isOld ? 'del' : 'add';
     }
 
-    column.appendChild(list);
-    return column;
+    const node = el('div', 'diff-row k-' + kind);
+    node.appendChild(el('span', 'ln', lineNo === null ? '' : String(lineNo)));
+
+    if (row.kind === 'gap') {
+      const skipped = row.skipped || 0;
+      node.appendChild(
+        el(
+          'span',
+          'code gap-label',
+          skipped === 1 ? '1 unchanged line' : skipped + ' unchanged lines'
+        )
+      );
+    } else {
+      node.appendChild(
+        renderCode(
+          text,
+          isOld ? row.oldSpans : row.newSpans,
+          pane.highlights ? pane.highlights[index] : null
+        )
+      );
+    }
+    return node;
   }
 
   /**
@@ -1364,7 +1446,7 @@
   }
 
   /**
-   * Keeps the two sides level.
+   * Keeps the two sides level and refills them as they move.
    *
    * Assigning a scrollTop that is already set fires no event, so the two
    * handlers settle after one hop rather than chasing each other. Horizontal
@@ -1382,8 +1464,15 @@
         if (other.scrollTop !== side.scrollTop) {
           other.scrollTop = side.scrollTop;
         }
+        queueDiffSync();
       });
     }
+    if (diffObserver) {
+      // The previous scroller is gone with the rest of the render.
+      diffObserver.disconnect();
+      diffObserver.observe(sides[0]);
+    }
+    syncDiffWindows();
   }
 
   /**
@@ -1393,32 +1482,68 @@
    */
   function gotoChange(delta) {
     const sides = root.querySelectorAll('.diff-side');
-    if (!sides.length) {
-      return;
-    }
-    const anchors = diffView.changeAnchors(diffRows());
-    if (!anchors.length) {
+    if (!sides.length || !diffAnchors.length) {
       return;
     }
 
     const firstVisible = Math.round(sides[0].scrollTop / CODE_ROW_H);
-    const at = diffView.currentAnchor(anchors, firstVisible);
+    const at = diffView.currentAnchor(diffAnchors, firstVisible);
     let next;
     if (delta > 0) {
       next = at + 1;
     } else {
       // Sitting on a change, "previous" means the one before it; sitting below
       // one, it means going back to it.
-      next = anchors[at] === firstVisible ? at - 1 : at;
+      next = diffAnchors[at] === firstVisible ? at - 1 : at;
     }
-    next = Math.max(0, Math.min(anchors.length - 1, next));
+    next = Math.max(0, Math.min(diffAnchors.length - 1, next));
 
     // A few rows of context above the change, so it does not land tight
     // against the column titles.
-    const top = Math.max(0, (anchors[next] - 3) * CODE_ROW_H);
+    const top = Math.max(0, (diffAnchors[next] - 3) * CODE_ROW_H);
     for (const side of sides) {
       side.scrollTop = top;
     }
+    queueDiffSync();
+  }
+
+  /**
+   * Everything about a file's diff that does not change until another file is
+   * picked: where the changes are, how wide each side is, and its colouring.
+   *
+   * Done once here rather than inside the render, because the pane is rebuilt
+   * for things as small as opening a folder in the tree, and lexing a large
+   * file on each of those was work nobody asked for.
+   */
+  function prepareFileDiff() {
+    const diff = state.fileDiff;
+    if (!diff || diff.binary || !diff.rows.length) {
+      diffAnchors = [];
+      state.fileHighlights = null;
+      state.fileWidths = null;
+      return;
+    }
+
+    diffAnchors = diffView.changeAnchors(diff.rows);
+
+    const oldText = diff.rows.map(function (row) {
+      return row.oldText;
+    });
+    const newText = diff.rows.map(function (row) {
+      return row.newText;
+    });
+
+    // A renamed file may well have changed language, so each side asks about
+    // its own name.
+    const oldName = diff.origPath || diff.path;
+    state.fileHighlights = {
+      old: syntax.highlightLines(oldText, syntax.languageFor(oldName)),
+      new: syntax.highlightLines(newText, syntax.languageFor(diff.path)),
+    };
+    state.fileWidths = {
+      old: diffView.widestLine(oldText, TAB_SIZE),
+      new: diffView.widestLine(newText, TAB_SIZE),
+    };
   }
 
   function openSelectedInEditor(d) {
@@ -1615,6 +1740,7 @@
     state.fileDiff = null;
     state.fileDiffError = null;
     state.fileDiffLoading = true;
+    prepareFileDiff();
     post({
       type: 'fileDiff',
       hash: state.details.hash,
@@ -1657,6 +1783,7 @@
         state.fileDiff = null;
         state.fileDiffError = null;
         state.fileDiffLoading = false;
+        prepareFileDiff();
         // Visual Studio opens a commit already showing its first file, so the
         // pane is never a blank frame waiting to be clicked.
         if (state.details && state.details.files.length) {
@@ -1674,6 +1801,7 @@
           state.fileDiffLoading = false;
           state.fileDiff = message.diff || null;
           state.fileDiffError = message.error || null;
+          prepareFileDiff();
           renderDetailsOnly();
         }
         break;

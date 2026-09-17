@@ -733,11 +733,12 @@ body {
   border-left: 1px solid var(--vsg-border);
 }
 
-/* Wide enough for the longest line, so a row's tint reaches the right edge
-   however far the side is scrolled. */
+/* The width is set from the script, in `ch`, from the longest line on this
+   side: wide enough that a row's tint reaches the right edge however far the
+   side is scrolled, and stated rather than measured so the browser never has
+   to lay out the rows that windowing keeps out of the DOM. */
 .diff-rows {
   min-width: 100%;
-  width: max-content;
 }
 
 .diff-row {
