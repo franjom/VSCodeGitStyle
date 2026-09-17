@@ -944,7 +944,7 @@
     node.addEventListener('contextmenu', function (event) {
       selectCommit(commit.hash);
       showMenu(event, [
-        { label: 'View Commit Details', run: function () { post({ type: 'showCommit', hash: commit.hash }); } },
+        { label: 'View Commit Details', run: showDetailsPane },
         { label: 'Copy Commit ID', run: function () { post({ type: 'copyId', hash: commit.hash }); } },
         '-',
         { label: 'New Branch from Here…', run: function () { post({ type: 'branchFrom', hash: commit.hash }); } },
@@ -964,6 +964,20 @@
     post({ type: 'selectCommit', hash: hash });
     renderRowsOnly();
     renderDetailsOnly();
+  }
+
+  /**
+   * Brings the details pane back. The commit is already selected - opening the
+   * menu selected it - so the pane only has to be on screen to show it, and
+   * this is the way back from the close button in its own header.
+   */
+  function showDetailsPane() {
+    if (state.detailsVisible) {
+      return;
+    }
+    state.detailsVisible = true;
+    save();
+    render();
   }
 
   function renderDetailsOnly() {
