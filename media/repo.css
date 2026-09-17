@@ -7,7 +7,8 @@
   --vsg-row-height: 22px;
   --vsg-lane-width: 14px;
   --vsg-left-width: 260px;
-  --vsg-details-width: 340px;
+  /* Set from the script, which also spaces the diff rows by it. */
+  --vsg-code-row: 18px;
   --vsg-col-ref: 186px;
   --vsg-col-graph: 60px;
   --vsg-col-author: 110px;
@@ -183,6 +184,19 @@ body {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
+  /* The refs and history share the upper band; commit details dock beneath. */
+  flex-direction: column;
+}
+
+.upper {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
+/* Maximizing the details pane gives it the whole window. */
+.upper.hidden {
+  display: none;
 }
 
 .left {
@@ -212,8 +226,15 @@ body {
 
 .splitter {
   flex: 0 0 4px;
-  cursor: col-resize;
   background: transparent;
+}
+
+.splitter.vertical {
+  cursor: col-resize;
+}
+
+.splitter.horizontal {
+  cursor: row-resize;
 }
 
 .splitter:hover,
@@ -559,13 +580,18 @@ body {
 /* --------------------------------------------------------- details pane */
 
 .details {
-  flex: 0 0 var(--vsg-details-width);
-  min-width: 220px;
+  /* Height comes from the script, which persists what the divider was left at. */
+  flex: 0 0 auto;
+  min-height: 120px;
   display: flex;
   flex-direction: column;
-  min-height: 0;
   overflow: hidden;
-  border-left: 1px solid var(--vsg-border);
+  border-top: 1px solid var(--vsg-border);
+}
+
+.details.max {
+  flex: 1 1 auto;
+  border-top: none;
 }
 
 .details .head {
@@ -573,8 +599,9 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 30px;
+  height: 28px;
   padding: 0 4px 0 10px;
+  background: var(--vscode-editorGroupHeader-tabsBackground, rgba(128, 128, 128, 0.08));
   border-bottom: 1px solid var(--vsg-border);
 }
 
@@ -585,140 +612,399 @@ body {
   white-space: nowrap;
 }
 
-.details .head .hash {
-  font-family: var(--vscode-editor-font-family, monospace);
-  font-size: 12px;
+.details .head .spacer,
+.details-toolbar .spacer {
+  flex: 1 1 auto;
+}
+
+.details > .placeholder {
+  padding: 14px 12px;
   color: var(--vsg-muted);
+  font-style: italic;
+  font-size: 12px;
+}
+
+/* ----------------------------------------------------- details toolbar */
+
+.details-toolbar {
   flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 6px;
+  border-bottom: 1px solid var(--vsg-border);
 }
 
-.details .head .spacer {
-  flex: 1 1 auto;
+.details-toolbar .count {
+  color: var(--vsg-muted);
+  font-size: 12px;
 }
 
-.details .scroll {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: auto;
-  padding: 9px 10px 16px;
-}
-
-.details .subject {
-  font-weight: 600;
-  line-height: 1.35;
-  user-select: text;
-}
-
-.details .message-body {
-  margin: 6px 0 0;
-  white-space: pre-wrap;
-  word-break: break-word;
+.details-toolbar .tally {
   font-family: var(--vscode-editor-font-family, monospace);
-  font-size: 12px;
-  color: var(--vsg-muted);
-  user-select: text;
+  font-size: 11px;
+  padding: 0 5px;
+  border-radius: 3px;
 }
 
-.details .meta {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 3px 10px;
-  margin-top: 12px;
-  font-size: 12px;
+.details-toolbar .tally.minus {
+  color: var(--vscode-gitDecoration-deletedResourceForeground, #c74e39);
+  background: rgba(199, 78, 57, 0.16);
 }
 
-.details .meta .k {
-  color: var(--vsg-muted);
-  white-space: nowrap;
+.details-toolbar .tally.plus {
+  color: var(--vscode-gitDecoration-addedResourceForeground, #81b88b);
+  background: rgba(129, 184, 139, 0.16);
 }
 
-.details .meta .v {
-  min-width: 0;
+.details-toolbar .file-name {
+  margin-left: 6px;
+  font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  user-select: text;
+  max-width: 40%;
 }
 
-.details .parents {
+/* ------------------------------------------------------------ diff area */
+
+.details-body {
+  flex: 1 1 auto;
+  min-height: 0;
   display: flex;
+}
+
+.diff-area {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.diff-area .placeholder {
+  padding: 14px 12px;
+  color: var(--vsg-muted);
+  font-style: italic;
+  font-size: 12px;
+}
+
+.diff-titles {
+  flex: 0 0 auto;
+  display: flex;
+  height: 22px;
+}
+
+.diff-title {
+  flex: 1 1 50%;
+  min-width: 0;
+  padding: 0 8px;
+  line-height: 22px;
+  font-size: 11px;
+  color: var(--vsg-muted);
+  border-bottom: 1px solid var(--vsg-border);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diff-title + .diff-title {
+  border-left: 1px solid var(--vsg-border);
+}
+
+.diff-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
+.diff-side {
+  flex: 1 1 50%;
+  min-width: 0;
+  overflow: auto;
+  background: var(--vscode-editor-background, #1f1f1f);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: var(--vscode-editor-font-size, 12px);
+  tab-size: 4;
+}
+
+.diff-side + .diff-side {
+  border-left: 1px solid var(--vsg-border);
+}
+
+/* Wide enough for the longest line, so a row's tint reaches the right edge
+   however far the side is scrolled. */
+.diff-rows {
+  min-width: 100%;
+  width: max-content;
+}
+
+.diff-row {
+  display: flex;
+  align-items: center;
+  height: var(--vsg-code-row);
+  line-height: var(--vsg-code-row);
+  white-space: pre;
+  background: var(--vscode-editor-background, #1f1f1f);
+}
+
+/* Line numbers stay put while the code scrolls sideways under them, which
+   needs an opaque background - inherited so it matches whatever tint the row
+   itself carries. */
+.diff-row .ln {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  flex: 0 0 52px;
+  padding: 0 8px 0 4px;
+  text-align: right;
+  color: var(--vscode-editorLineNumber-foreground, #6e7681);
+  background: inherit;
+  user-select: none;
+}
+
+.diff-row .code {
+  flex: 0 0 auto;
+  padding-right: 12px;
+}
+
+.diff-row.k-add {
+  background: var(--vscode-diffEditor-insertedLineBackground, rgba(107, 176, 107, 0.14));
+}
+
+.diff-row.k-del {
+  background: var(--vscode-diffEditor-removedLineBackground, rgba(199, 78, 57, 0.14));
+}
+
+/* The blank opposite a line this side does not have. Hatched rather than
+   merely tinted, so it reads as absent space instead of as an empty line. */
+.diff-row.k-empty {
+  background-color: var(--vscode-editor-background, #1f1f1f);
+  background-image: repeating-linear-gradient(
+    -45deg,
+    var(--vscode-diffEditor-diagonalFill, rgba(128, 128, 128, 0.22)) 0 1px,
+    transparent 1px 7px
+  );
+}
+
+.diff-row.k-gap {
+  background: var(--vscode-diffEditor-unchangedRegionBackground, rgba(128, 128, 128, 0.07));
+  color: var(--vsg-muted);
+  font-style: italic;
+}
+
+.diff-row.k-gap .gap-label {
+  font-family: var(--vscode-font-family, "Segoe UI", sans-serif);
+  font-size: 11px;
+}
+
+.diff-row.k-add .word {
+  background: var(--vscode-diffEditor-insertedTextBackground, rgba(107, 176, 107, 0.3));
+  border-radius: 2px;
+}
+
+.diff-row.k-del .word {
+  background: var(--vscode-diffEditor-removedTextBackground, rgba(199, 78, 57, 0.3));
+  border-radius: 2px;
+}
+
+.diff-note {
+  flex: 0 0 auto;
+  padding: 3px 10px;
+  font-size: 11px;
+  color: var(--vsg-muted);
+  border-top: 1px solid var(--vsg-border);
+}
+
+/* ----------------------------------------------------------- meta rail */
+
+.meta-rail {
+  /* Width comes from the script, the same way the pane's height does. */
+  flex: 0 0 auto;
+  min-width: 200px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  border-left: 1px solid var(--vsg-border);
+}
+
+.meta-rail .scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 10px 16px;
+}
+
+.meta-rail .id-row {
+  display: flex;
+  align-items: center;
   gap: 6px;
   flex-wrap: wrap;
 }
 
-.details .parent {
+.meta-rail .id-row .k {
+  color: var(--vsg-muted);
+}
+
+.meta-rail .mono {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 12px;
+}
+
+.meta-rail .section-label {
+  margin-top: 12px;
+  margin-bottom: 3px;
+  font-size: 12px;
+  color: var(--vsg-muted);
+}
+
+.meta-rail .message {
+  background: var(--vscode-input-background, rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--vsg-border);
+  border-radius: 2px;
+  padding: 5px 7px;
+  user-select: text;
+}
+
+.meta-rail .subject {
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.meta-rail .message-body {
+  margin-top: 5px;
+  white-space: pre-wrap;
+  line-height: 1.4;
+  color: var(--vsg-muted);
+  font-size: 12px;
+}
+
+.meta-rail .who {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.meta-rail .who .codicon {
+  color: var(--vsg-muted);
+  font-size: 14px;
+}
+
+.meta-rail .who .name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meta-rail .who .when,
+.meta-rail .who .spacer {
+  flex: 0 0 auto;
+  color: var(--vsg-muted);
+}
+
+.meta-rail .who .spacer {
+  flex: 1 1 auto;
+}
+
+.meta-rail .meta {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 2px 10px;
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.meta-rail .meta .k {
+  color: var(--vsg-muted);
+}
+
+.meta-rail .meta .v {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meta-rail .parents {
+  display: flex;
+  gap: 6px;
+}
+
+.meta-rail .parent {
   font-family: var(--vscode-editor-font-family, monospace);
   color: var(--vscode-textLink-foreground, #4daafc);
   cursor: pointer;
 }
 
-.details .parent:hover {
+.meta-rail .parent:hover {
   text-decoration: underline;
 }
 
-.details .files-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 14px 0 4px;
-  font-weight: 600;
+/* --------------------------------------------------------- changes tree */
+
+.changes {
+  margin-top: 12px;
 }
 
-.details .files-head .note {
+.changes-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding-bottom: 3px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--vsg-border);
+}
+
+.changes-head .note {
   font-weight: 400;
   font-size: 11px;
   color: var(--vsg-muted);
 }
 
-.details .file {
-  display: flex;
-  align-items: center;
-  height: 20px;
-  padding: 0 4px;
-  border-radius: 3px;
-  cursor: pointer;
-}
-
-.details .file:hover {
-  background: var(--vsg-hover);
-}
-
-.details .file .st {
-  flex: 0 0 16px;
-  text-align: center;
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.details .file .name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  flex: 0 1 auto;
-}
-
-.details .file .dir {
-  margin-left: 7px;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 11px;
+.changes .placeholder {
+  padding: 6px 2px;
   color: var(--vsg-muted);
-}
-
-.details .actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 14px;
+  font-style: italic;
   font-size: 12px;
 }
 
-.details .placeholder {
-  padding: 16px 12px;
+.changes .tree-row {
+  height: 20px;
+}
+
+/* The status letter is the one thing in the row that carries colour, so the
+   file name itself stays readable against the selection highlight. */
+.changes .tree-row .suffix {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-weight: 600;
+}
+
+.changes .tree-row.st-A .suffix {
+  color: var(--vscode-gitDecoration-addedResourceForeground, #81b88b);
+}
+
+.changes .tree-row.st-M .suffix {
+  color: var(--vscode-gitDecoration-modifiedResourceForeground, #e2c08d);
+}
+
+.changes .tree-row.st-D .suffix {
+  color: var(--vscode-gitDecoration-deletedResourceForeground, #c74e39);
+}
+
+.changes .tree-row.st-R .suffix,
+.changes .tree-row.st-C .suffix {
+  color: var(--vscode-gitDecoration-renamedResourceForeground, #73c991);
+}
+
+.changes .tree-row.st-T .suffix {
+  color: var(--vsg-lane-2);
+}
+
+.changes .tree-row.change-file .icon {
   color: var(--vsg-muted);
-  font-style: italic;
 }
 
 .st-A {

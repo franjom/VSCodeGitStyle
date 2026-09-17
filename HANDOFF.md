@@ -29,7 +29,9 @@ Two views, both webviews styled entirely with VS Code theme tokens:
   (`media/repo.js`, `media/repo.css`, `src/repositoryWindow.ts`,
   `src/graph.ts`). Branches/tags pane, Incoming and Local History groups, SVG
   lane graph, Message/Author/Date/ID columns, history filter, paging, and a
-  commit details pane.
+  commit details pane docked across the bottom (`src/diff.ts` parses one file's
+  changes into aligned rows, `media/diffview.js` holds the row collapsing,
+  change navigation and changes-tree arithmetic, `media/repo.js` draws them).
 
 Supporting code: `src/git.ts` (shells out to git, owns `parseStatus`),
 `src/tree.ts` (folder tree with single-child chain compression),

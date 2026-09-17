@@ -91,15 +91,16 @@ A `WebviewPanel` in the editor area.
 | Branch / Tag chips per commit | done, ranked so the current branch and tags survive the cap |
 | Message / Author / Date / ID columns | done |
 | Click to select | done, fills the commit details pane |
-| Commit details pane | done: message, author/committer, full SHA, clickable parents, refs, and the changed-file list |
-| Click a file in the pane | done, opens a real diff of that file at that commit via the `vsgitstyle-blob:` scheme |
+| Commit details pane | done: docked across the bottom, with a side-by-side diff of the selected file, change navigation, and a metadata rail holding the message, author/committer, clickable parents, refs and a folder tree of the changed files |
+| Side-by-side diff inside the pane | done: whole file on both sides, synced vertical scroll, word-level highlight inside an edited line, `↑` `↓` between changes, `-n` `+n` tallies ([src/diff.ts](src/diff.ts), [media/diffview.js](media/diffview.js)) |
+| Click a file in the pane | done, shows its diff in the pane; double-click opens a real editor diff at that commit via the `vsgitstyle-blob:` scheme |
 | Double-click a commit | done, opens the whole commit as a read-only patch |
 | Context menu: details, copy ID, new branch here | done |
 | Paging | `Load more commits`, page size from `vsGitStyle.graphPageSize` (default 200); incoming commits get their own budget so a large fetch does not truncate Local History |
 | Row virtualization | done; only the rows on screen are in the DOM, so an 8,000-commit history costs what 200 does |
 | Stays current | reloads when the repository changes anywhere - the sidebar, a terminal, another editor - not only on its own actions |
 | Resizable columns | not done; the grid template is fixed except for the graph column |
-| Resizable details pane, hideable | done, draggable splitter plus a toolbar toggle; width and visibility persist |
+| Resizable details pane, hideable | done: draggable dividers for the pane's height and the rail's width, a maximize toggle, a toolbar toggle and the context menu's `View Commit Details` to bring it back; all of it persists |
 
 ### How the graph is computed
 

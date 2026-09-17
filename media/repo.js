@@ -11,11 +11,22 @@
   const LANE_W = 14;
   const LANE_COLORS = 8;
 
+  // Height of one line in the side-by-side diff. The two sides only stay in
+  // step because every row is exactly this tall, so the value is pushed into
+  // the stylesheet rather than being written down in both places.
+  const CODE_ROW_H = 18;
+
+  // Beyond this many diff rows the unchanged stretches are collapsed. Large
+  // enough that an ordinary source file is shown whole, small enough that a
+  // generated one does not put tens of thousands of rows in the DOM.
+  const MAX_DIFF_ROWS = 4000;
+
   // Rows kept in the DOM beyond each edge of the viewport, so a small scroll is
   // already covered by the time the next frame runs.
   const OVERSCAN = 8;
 
   const visibleRange = self.VsgVirtual.visibleRange;
+  const diffView = self.VsgDiffView;
 
   const persisted = vscode.getState() || {};
 
@@ -28,11 +39,21 @@
     treeClosed: new Set(persisted.treeClosed || ['tags', 'pullRequests']),
     selected: null,
     leftWidth: persisted.leftWidth || 260,
-    detailsWidth: persisted.detailsWidth || 340,
     detailsVisible: persisted.detailsVisible !== false,
+    // The details pane is docked across the bottom, so it is sized by height;
+    // the metadata rail inside it is the only part still sized by width.
+    detailsHeight: persisted.detailsHeight || 380,
+    metaWidth: persisted.metaWidth || 300,
+    detailsMax: persisted.detailsMax || false,
     details: null,
     detailsError: null,
     detailsLoading: false,
+    /** Path of the file whose diff the pane is showing. */
+    detailsFile: null,
+    fileDiff: null,
+    fileDiffError: null,
+    fileDiffLoading: false,
+    changesClosed: new Set(persisted.changesClosed || []),
   };
 
   // The row regions currently on screen, rebuilt with the rows themselves.
@@ -43,8 +64,11 @@
       collapsed: state.collapsed,
       treeClosed: [...state.treeClosed],
       leftWidth: state.leftWidth,
-      detailsWidth: state.detailsWidth,
       detailsVisible: state.detailsVisible,
+      detailsHeight: state.detailsHeight,
+      metaWidth: state.metaWidth,
+      detailsMax: state.detailsMax,
+      changesClosed: [...state.changesClosed],
     });
   }
 
@@ -242,16 +266,50 @@
     // a busy history is clipped by the grid template.
     root.style.setProperty('--vsg-col-graph', graphWidth(state.model.graph.maxLanes) + 'px');
 
+    root.style.setProperty('--vsg-code-row', CODE_ROW_H + 'px');
+
+    // Visual Studio docks commit details across the bottom of the window, so
+    // the refs and the history share an upper band and the pane spans the
+    // whole width beneath them rather than taking a column beside them.
     const body = el('div', 'body');
+    const upper = el('div', 'upper' + (state.detailsVisible && state.detailsMax ? ' hidden' : ''));
     const left = renderLeft();
     left.style.flexBasis = state.leftWidth + 'px';
-    body.appendChild(left);
-    body.appendChild(renderSplitter('.left', 'left'));
-    body.appendChild(renderRight());
+    upper.appendChild(left);
+    upper.appendChild(
+      renderSplitter({
+        selector: '.left',
+        axis: 'x',
+        min: 140,
+        max: 720,
+        apply: function (size) {
+          state.leftWidth = size;
+        },
+      })
+    );
+    upper.appendChild(renderRight());
+    body.appendChild(upper);
+
     if (state.detailsVisible) {
+      if (!state.detailsMax) {
+        body.appendChild(
+          renderSplitter({
+            selector: '.details',
+            axis: 'y',
+            // Dragging the divider up has to make the pane below it taller.
+            invert: true,
+            min: 150,
+            max: Math.max(200, window.innerHeight - 160),
+            apply: function (size) {
+              state.detailsHeight = size;
+            },
+          })
+        );
+      }
       const details = renderDetails();
-      details.style.flexBasis = state.detailsWidth + 'px';
-      body.appendChild(renderSplitter('.details', 'right'));
+      if (!state.detailsMax) {
+        details.style.flexBasis = state.detailsHeight + 'px';
+      }
       body.appendChild(details);
     }
     root.appendChild(body);
@@ -263,6 +321,7 @@
     // Only now is the pane laid out, which is what the row windows measure
     // themselves against.
     syncWindows();
+    installDiffScroll();
 
     installKeyboardNavigation(root);
   }
@@ -328,30 +387,32 @@
    * go on resizing a node that is no longer in the document - the drag simply
    * stopped working until the next full render.
    */
-  function renderSplitter(selector, side) {
-    const splitter = el('div', 'splitter');
+  /**
+   * A draggable divider. `axis` picks the dimension it moves in, `invert` is
+   * for a pane that grows as the pointer travels toward its own edge - both the
+   * bottom dock and the right-hand rail do - and `apply` records the new size.
+   */
+  function renderSplitter(options) {
+    const horizontal = options.axis !== 'y';
+    const splitter = el('div', 'splitter ' + (horizontal ? 'vertical' : 'horizontal'));
     splitter.addEventListener('mousedown', function (event) {
       event.preventDefault();
       splitter.classList.add('dragging');
-      const startX = event.clientX;
-      const pane = root.querySelector(selector);
+      const pane = root.querySelector(options.selector);
       if (!pane) {
         return;
       }
-      const startWidth = pane.getBoundingClientRect().width;
+      const start = horizontal ? event.clientX : event.clientY;
+      const rect = pane.getBoundingClientRect();
+      const startSize = horizontal ? rect.width : rect.height;
 
       function move(e) {
-        // Dragging the right-hand splitter left must widen its pane, so the
-        // delta is inverted for that side.
-        const delta = side === 'right' ? startX - e.clientX : e.clientX - startX;
-        const next = Math.max(200, Math.min(720, startWidth + delta));
-        if (side === 'right') {
-          state.detailsWidth = next;
-        } else {
-          state.leftWidth = next;
-        }
+        const at = horizontal ? e.clientX : e.clientY;
+        const delta = options.invert ? start - at : at - start;
+        const next = Math.max(options.min, Math.min(options.max, startSize + delta));
+        options.apply(next);
         // Resolved on every move, so a pane replaced mid-drag is still sized.
-        const current = root.querySelector(selector);
+        const current = root.querySelector(options.selector);
         if (current) {
           current.style.flexBasis = next + 'px';
         }
@@ -961,6 +1022,10 @@
     state.details = null;
     state.detailsError = null;
     state.detailsLoading = true;
+    state.detailsFile = null;
+    state.fileDiff = null;
+    state.fileDiffError = null;
+    state.fileDiffLoading = false;
     post({ type: 'selectCommit', hash: hash });
     renderRowsOnly();
     renderDetailsOnly();
@@ -990,20 +1055,74 @@
       return;
     }
     const next = renderDetails();
-    next.style.flexBasis = state.detailsWidth + 'px';
+    if (!state.detailsMax) {
+      next.style.flexBasis = state.detailsHeight + 'px';
+    }
     existing.replaceWith(next);
+    installDiffScroll();
   }
 
   function renderDetails() {
-    const pane = el('div', 'details');
-    const details = state.details;
+    const pane = el('div', 'details' + (state.detailsMax ? ' max' : ''));
+    pane.appendChild(renderDetailsHead());
 
-    const head = el('div', 'head');
-    head.appendChild(el('span', 'title', 'Commit details'));
-    head.appendChild(el('div', 'spacer'));
-    if (details) {
-      head.appendChild(el('span', 'hash', details.shortHash));
+    if (state.detailsError) {
+      pane.appendChild(el('div', 'placeholder', state.detailsError));
+      return pane;
     }
+    const d = state.details;
+    if (!d) {
+      pane.appendChild(
+        el(
+          'div',
+          'placeholder',
+          state.detailsLoading ? 'Loading…' : 'Select a commit to see its details.'
+        )
+      );
+      return pane;
+    }
+
+    pane.appendChild(renderDiffToolbar(d));
+
+    const inner = el('div', 'details-body');
+    inner.appendChild(renderDiffArea(d));
+    inner.appendChild(
+      renderSplitter({
+        selector: '.meta-rail',
+        axis: 'x',
+        // The rail sits at the right edge, so dragging left has to widen it.
+        invert: true,
+        min: 220,
+        max: 620,
+        apply: function (size) {
+          state.metaWidth = size;
+        },
+      })
+    );
+    const rail = renderMetaRail(d);
+    rail.style.flexBasis = state.metaWidth + 'px';
+    inner.appendChild(rail);
+    pane.appendChild(inner);
+    return pane;
+  }
+
+  function renderDetailsHead() {
+    const head = el('div', 'head');
+    const title = state.details ? 'Commit ' + state.details.shortHash : 'Commit details';
+    head.appendChild(el('span', 'title', title));
+    head.appendChild(el('div', 'spacer'));
+    head.appendChild(
+      iconButton(
+        state.detailsMax ? 'chevron-down' : 'chevron-up',
+        state.detailsMax ? 'Restore' : 'Maximize',
+        function () {
+          state.detailsMax = !state.detailsMax;
+          save();
+          render();
+          installDiffScroll();
+        }
+      )
+    );
     head.appendChild(
       iconButton('close', 'Hide commit details', function () {
         state.detailsVisible = false;
@@ -1011,28 +1130,321 @@
         render();
       })
     );
-    pane.appendChild(head);
-
-    const scroll = el('div', 'scroll');
-    if (state.detailsError) {
-      scroll.appendChild(el('div', 'placeholder', state.detailsError));
-    } else if (details) {
-      fillDetails(scroll, details);
-    } else if (state.detailsLoading) {
-      scroll.appendChild(el('div', 'placeholder', 'Loading…'));
-    } else {
-      scroll.appendChild(el('div', 'placeholder', 'Select a commit to see its details.'));
-    }
-    pane.appendChild(scroll);
-    return pane;
+    return head;
   }
 
-  function fillDetails(container, d) {
-    container.appendChild(el('div', 'subject', d.subject));
-    if (d.body) {
-      container.appendChild(el('div', 'message-body', d.body));
+  // ------------------------------------------------------------------- diff
+
+  /** The rows actually drawn, which is the parsed diff after any collapsing. */
+  function diffRows() {
+    const diff = state.fileDiff;
+    if (!diff || !diff.rows.length) {
+      return [];
+    }
+    return diffView.collapseRows(diff.rows, MAX_DIFF_ROWS);
+  }
+
+  function renderDiffToolbar(d) {
+    const bar = el('div', 'details-toolbar');
+    const diff = state.fileDiff;
+    const anchors = diff ? diffView.changeAnchors(diffRows()) : [];
+
+    bar.appendChild(
+      iconButton(
+        'arrow-up',
+        'Previous change',
+        function () {
+          gotoChange(-1);
+        },
+        anchors.length === 0
+      )
+    );
+    bar.appendChild(
+      iconButton(
+        'arrow-down',
+        'Next change',
+        function () {
+          gotoChange(1);
+        },
+        anchors.length === 0
+      )
+    );
+
+    const count = anchors.length;
+    bar.appendChild(el('span', 'count', count === 1 ? '1 change' : count + ' changes'));
+    if (diff) {
+      bar.appendChild(el('span', 'tally minus', '-' + diff.removed));
+      bar.appendChild(el('span', 'tally plus', '+' + diff.added));
     }
 
+    if (state.detailsFile) {
+      const name = el('span', 'file-name', state.detailsFile.split('/').pop());
+      name.title = state.detailsFile;
+      bar.appendChild(name);
+    }
+
+    bar.appendChild(el('div', 'spacer'));
+    if (state.detailsFile) {
+      bar.appendChild(
+        iconButton('go-to-file', 'Open this diff in an editor', function () {
+          openSelectedInEditor(d);
+        })
+      );
+    }
+    return bar;
+  }
+
+  function renderDiffArea(d) {
+    const area = el('div', 'diff-area');
+
+    if (!state.detailsFile) {
+      area.appendChild(el('div', 'placeholder', 'Select a file to see its changes.'));
+      return area;
+    }
+    if (state.fileDiffError) {
+      area.appendChild(el('div', 'placeholder', state.fileDiffError));
+      return area;
+    }
+    if (state.fileDiffLoading || !state.fileDiff) {
+      area.appendChild(el('div', 'placeholder', 'Loading…'));
+      return area;
+    }
+    if (state.fileDiff.binary) {
+      area.appendChild(el('div', 'placeholder', 'Binary file - no text diff to show.'));
+      return area;
+    }
+
+    const rows = diffRows();
+    if (!rows.length) {
+      area.appendChild(el('div', 'placeholder', 'No changes in this file.'));
+      return area;
+    }
+
+    const name = state.detailsFile.split('/').pop();
+    const parent = d.parents.length ? d.parents[0].slice(0, 7) : 'empty tree';
+    const oldName = state.fileDiff.origPath ? state.fileDiff.origPath.split('/').pop() : name;
+
+    const titles = el('div', 'diff-titles');
+    titles.appendChild(el('div', 'diff-title', oldName + ' (' + parent + ')'));
+    titles.appendChild(el('div', 'diff-title', name + ' (' + d.shortHash + ')'));
+    area.appendChild(titles);
+
+    const scroll = el('div', 'diff-scroll');
+    scroll.appendChild(renderDiffSide(rows, 'old'));
+    scroll.appendChild(renderDiffSide(rows, 'new'));
+    area.appendChild(scroll);
+
+    if (state.fileDiff.truncated) {
+      area.appendChild(
+        el('div', 'diff-note', 'Too large to show whole; unchanged regions are elided.')
+      );
+    }
+    return area;
+  }
+
+  /**
+   * One column of the diff. Both columns hold exactly the same number of rows,
+   * each a fixed height, which is what lets the two scroll in step and what
+   * keeps a deleted line opposite the line that replaced it.
+   */
+  function renderDiffSide(rows, side) {
+    const column = el('div', 'diff-side');
+    column.dataset.side = side;
+    const list = el('div', 'diff-rows');
+    const isOld = side === 'old';
+
+    for (const row of rows) {
+      const text = isOld ? row.oldText : row.newText;
+      const lineNo = isOld ? row.oldNo : row.newNo;
+
+      let kind = row.kind;
+      if (row.kind !== 'gap' && text === null) {
+        // The blank standing opposite a line this side does not have.
+        kind = 'empty';
+      } else if (row.kind === 'add' || row.kind === 'del' || row.kind === 'change') {
+        // An edited line reads as removed on the left and added on the right;
+        // the word highlight inside it says what actually moved.
+        kind = isOld ? 'del' : 'add';
+      }
+
+      const node = el('div', 'diff-row k-' + kind);
+      node.appendChild(el('span', 'ln', lineNo === null ? '' : String(lineNo)));
+
+      if (row.kind === 'gap') {
+        const skipped = row.skipped || 0;
+        node.appendChild(
+          el(
+            'span',
+            'code gap-label',
+            skipped === 1 ? '1 unchanged line' : skipped + ' unchanged lines'
+          )
+        );
+      } else {
+        node.appendChild(renderCode(text, isOld ? row.oldSpans : row.newSpans));
+      }
+      list.appendChild(node);
+    }
+
+    column.appendChild(list);
+    return column;
+  }
+
+  /**
+   * A line of code with the parts that differ picked out. The text goes in as
+   * text nodes rather than as markup, so a line containing angle brackets stays
+   * a line of code.
+   */
+  function renderCode(text, spans) {
+    const node = el('span', 'code');
+    if (text === null) {
+      return node;
+    }
+    if (!spans || !spans.length) {
+      node.textContent = text;
+      return node;
+    }
+    let at = 0;
+    for (const span of spans) {
+      if (span[0] > at) {
+        node.appendChild(document.createTextNode(text.slice(at, span[0])));
+      }
+      node.appendChild(el('span', 'word', text.slice(span[0], span[1])));
+      at = span[1];
+    }
+    if (at < text.length) {
+      node.appendChild(document.createTextNode(text.slice(at)));
+    }
+    return node;
+  }
+
+  /**
+   * Keeps the two sides level.
+   *
+   * Assigning a scrollTop that is already set fires no event, so the two
+   * handlers settle after one hop rather than chasing each other. Horizontal
+   * scrolling is left independent, the way Visual Studio gives each side its
+   * own bar.
+   */
+  function installDiffScroll() {
+    const sides = root.querySelectorAll('.diff-side');
+    if (sides.length !== 2) {
+      return;
+    }
+    for (const side of sides) {
+      side.addEventListener('scroll', function () {
+        const other = side === sides[0] ? sides[1] : sides[0];
+        if (other.scrollTop !== side.scrollTop) {
+          other.scrollTop = side.scrollTop;
+        }
+      });
+    }
+  }
+
+  /**
+   * Steps to the next or previous run of changed lines, measuring from what is
+   * on screen rather than from a remembered index, so scrolling by hand and
+   * then pressing the button goes where the user is looking.
+   */
+  function gotoChange(delta) {
+    const sides = root.querySelectorAll('.diff-side');
+    if (!sides.length) {
+      return;
+    }
+    const anchors = diffView.changeAnchors(diffRows());
+    if (!anchors.length) {
+      return;
+    }
+
+    const firstVisible = Math.round(sides[0].scrollTop / CODE_ROW_H);
+    const at = diffView.currentAnchor(anchors, firstVisible);
+    let next;
+    if (delta > 0) {
+      next = at + 1;
+    } else {
+      // Sitting on a change, "previous" means the one before it; sitting below
+      // one, it means going back to it.
+      next = anchors[at] === firstVisible ? at - 1 : at;
+    }
+    next = Math.max(0, Math.min(anchors.length - 1, next));
+
+    // A few rows of context above the change, so it does not land tight
+    // against the column titles.
+    const top = Math.max(0, (anchors[next] - 3) * CODE_ROW_H);
+    for (const side of sides) {
+      side.scrollTop = top;
+    }
+  }
+
+  function openSelectedInEditor(d) {
+    const file = (d.files || []).find(function (f) {
+      return f.path === state.detailsFile;
+    });
+    if (file) {
+      post({
+        type: 'openFileDiff',
+        hash: d.hash,
+        path: file.path,
+        origPath: file.origPath,
+        status: file.status,
+      });
+    }
+  }
+
+  // -------------------------------------------------------------- meta rail
+
+  function renderMetaRail(d) {
+    const rail = el('div', 'meta-rail');
+    const scroll = el('div', 'scroll');
+
+    const idRow = el('div', 'id-row');
+    idRow.appendChild(el('span', 'k', 'ID:'));
+    idRow.appendChild(el('span', 'v mono', d.shortHash));
+    idRow.appendChild(el('div', 'spacer'));
+    idRow.appendChild(
+      link('Copy ID', function () {
+        post({ type: 'copyId', hash: d.hash });
+      })
+    );
+    idRow.appendChild(
+      link('Full patch', function () {
+        post({ type: 'showCommit', hash: d.hash });
+      })
+    );
+    idRow.appendChild(
+      link('New branch…', function () {
+        post({ type: 'branchFrom', hash: d.hash });
+      })
+    );
+    scroll.appendChild(idRow);
+
+    scroll.appendChild(el('div', 'section-label', 'Message:'));
+    const message = el('div', 'message');
+    message.appendChild(el('div', 'subject', d.subject));
+    if (d.body) {
+      message.appendChild(el('div', 'message-body', d.body));
+    }
+    scroll.appendChild(message);
+
+    const who = el('div', 'who');
+    who.appendChild(icon('account'));
+    who.appendChild(el('span', 'name', d.author.name));
+    who.appendChild(el('div', 'spacer'));
+    who.appendChild(el('span', 'when', formatDate(d.author.date)));
+    who.title = d.author.name + ' <' + d.author.email + '>';
+    scroll.appendChild(who);
+
+    scroll.appendChild(renderRailMeta(d));
+    scroll.appendChild(renderChangesTree(d));
+    rail.appendChild(scroll);
+    return rail;
+  }
+
+  /**
+   * The rows worth showing only when they say something: a commit made in one
+   * go by its own author needs no committer line, and most commits carry one
+   * parent and no refs.
+   */
+  function renderRailMeta(d) {
     const meta = el('div', 'meta');
     function addMeta(key, value) {
       meta.appendChild(el('span', 'k', key));
@@ -1046,15 +1458,10 @@
       meta.appendChild(cell);
     }
 
-    addMeta('Author', d.author.name + ' <' + d.author.email + '>');
-    addMeta('Date', formatDate(d.author.date));
-    // Only worth the rows when the commit was not authored and committed in
-    // one go - a rebase, a cherry-pick, or a patch applied by someone else.
     if (d.committer.name !== d.author.name || d.committer.date !== d.author.date) {
       addMeta('Committer', d.committer.name + ' <' + d.committer.email + '>');
       addMeta('Committed', formatDate(d.committer.date));
     }
-    addMeta('Commit', d.hash);
 
     if (d.parents.length) {
       const wrap = el('div', 'parents');
@@ -1072,59 +1479,75 @@
     if (d.refs.length) {
       addMeta('Refs', d.refs.join(', '));
     }
-    container.appendChild(meta);
-
-    const filesHead = el('div', 'files-head');
-    filesHead.appendChild(el('span', null, 'Changes (' + d.files.length + ')'));
-    if (d.isMerge) {
-      filesHead.appendChild(el('span', 'note', 'against the first parent'));
-    }
-    if (d.truncated) {
-      filesHead.appendChild(el('span', 'note', 'list truncated'));
-    }
-    container.appendChild(filesHead);
-
-    if (!d.files.length) {
-      container.appendChild(el('div', 'placeholder', 'No file changes.'));
-    } else {
-      for (const file of d.files) {
-        container.appendChild(detailsFileRow(d, file));
-      }
-    }
-
-    const actions = el('div', 'actions');
-    actions.appendChild(
-      link('View full patch', function () {
-        post({ type: 'showCommit', hash: d.hash });
-      })
-    );
-    actions.appendChild(
-      link('Copy ID', function () {
-        post({ type: 'copyId', hash: d.hash });
-      })
-    );
-    actions.appendChild(
-      link('New branch here…', function () {
-        post({ type: 'branchFrom', hash: d.hash });
-      })
-    );
-    container.appendChild(actions);
+    return meta;
   }
 
-  function detailsFileRow(d, file) {
-    const row = el('div', 'file');
-    const segments = file.path.split('/');
-    const name = segments.pop();
+  function renderChangesTree(d) {
+    const wrap = el('div', 'changes');
 
-    row.appendChild(el('span', 'st st-' + file.status, file.status));
-    row.appendChild(el('span', 'name', name));
-    if (segments.length) {
-      row.appendChild(el('span', 'dir', segments.join('/')));
+    const head = el('div', 'changes-head');
+    head.appendChild(el('span', null, 'Changes (' + d.files.length + ')'));
+    if (d.isMerge) {
+      head.appendChild(el('span', 'note', 'against the first parent'));
     }
-    row.title = file.origPath
+    if (d.truncated) {
+      head.appendChild(el('span', 'note', 'list truncated'));
+    }
+    wrap.appendChild(head);
+
+    if (!d.files.length) {
+      wrap.appendChild(el('div', 'placeholder', 'No file changes.'));
+      return wrap;
+    }
+
+    const rows = diffView.visibleTreeRows(diffView.buildFileTree(d.files), state.changesClosed);
+    for (const row of rows) {
+      wrap.appendChild(row.kind === 'dir' ? changesDirRow(row) : changesFileRow(d, row));
+    }
+    return wrap;
+  }
+
+  function changesDirRow(row) {
+    const open = !state.changesClosed.has(row.key);
+    const node = treeRow({
+      kind: 'group-node',
+      depth: row.depth,
+      open: open,
+      codicon: open ? 'folder-opened' : 'folder',
+      label: row.label,
+    });
+    node.addEventListener('click', function () {
+      if (open) {
+        state.changesClosed.add(row.key);
+      } else {
+        state.changesClosed.delete(row.key);
+      }
+      save();
+      renderDetailsOnly();
+    });
+    return node;
+  }
+
+  function changesFileRow(d, row) {
+    const file = row.file;
+    const node = treeRow({
+      kind: 'change-file',
+      depth: row.depth,
+      codicon: 'file',
+      label: row.label,
+      suffix: file.status,
+      selected: file.path === state.detailsFile,
+    });
+    node.classList.add('st-' + file.status);
+    node.title = file.origPath
       ? file.path + String.fromCharCode(10) + '(was ' + file.origPath + ')'
       : file.path;
-    row.addEventListener('click', function () {
+    node.addEventListener('click', function () {
+      selectDetailsFile(file);
+    });
+    // A double click opens the same diff in a real editor, which is the way to
+    // a full-size view with search and the editor's own navigation.
+    node.addEventListener('dblclick', function () {
       post({
         type: 'openFileDiff',
         hash: d.hash,
@@ -1133,7 +1556,28 @@
         status: file.status,
       });
     });
-    return row;
+    return node;
+  }
+
+  /**
+   * Points the diff at one file and asks for it. `quiet` is for the selection
+   * made while the details themselves are being drawn, where the caller is
+   * about to render anyway.
+   */
+  function selectDetailsFile(file, quiet) {
+    state.detailsFile = file.path;
+    state.fileDiff = null;
+    state.fileDiffError = null;
+    state.fileDiffLoading = true;
+    post({
+      type: 'fileDiff',
+      hash: state.details.hash,
+      path: file.path,
+      origPath: file.origPath,
+    });
+    if (!quiet) {
+      renderDetailsOnly();
+    }
   }
 
   // ------------------------------------------------------------------------
@@ -1163,7 +1607,29 @@
         state.detailsLoading = false;
         state.details = message.details || null;
         state.detailsError = message.error || null;
+        state.detailsFile = null;
+        state.fileDiff = null;
+        state.fileDiffError = null;
+        state.fileDiffLoading = false;
+        // Visual Studio opens a commit already showing its first file, so the
+        // pane is never a blank frame waiting to be clicked.
+        if (state.details && state.details.files.length) {
+          selectDetailsFile(state.details.files[0], true);
+        }
         renderDetailsOnly();
+        break;
+      case 'fileDiff':
+        // A reply for a file or commit the user has since moved off is stale.
+        if (
+          state.details &&
+          message.hash === state.details.hash &&
+          message.path === state.detailsFile
+        ) {
+          state.fileDiffLoading = false;
+          state.fileDiff = message.diff || null;
+          state.fileDiffError = message.error || null;
+          renderDetailsOnly();
+        }
         break;
       case 'busy':
         state.busy = message.busy;

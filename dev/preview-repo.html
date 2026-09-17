@@ -127,11 +127,60 @@
             } : null
           } }));
         }
+        if (message.type === 'fileDiff') {
+          window.dispatchEvent(new MessageEvent('message', { data: {
+            type: 'fileDiff',
+            hash: message.hash,
+            path: message.path,
+            diff: synthDiff(message.path)
+          } }));
+        }
       },
     };
   };
+
+  /*
+   * A whole-file diff with one edited line, a deletion and an insertion, so the
+   * preview exercises every row kind the real parser can produce - including
+   * the word-level spans, which are the fiddliest thing to get right in CSS.
+   */
+  function synthDiff(path) {
+    var rows = [];
+    var oldNo = 0;
+    var newNo = 0;
+    function same(text) {
+      oldNo++; newNo++;
+      rows.push({ kind: 'same', oldNo: oldNo, newNo: newNo, oldText: text, newText: text });
+    }
+    for (var i = 0; i < 14; i++) {
+      same(i % 4 === 0 ? '' : '        // context line ' + (i + 1) + ' of ' + path.split('/').pop());
+    }
+
+    oldNo++; newNo++;
+    var before = '        if (!this._defaultVrstePrijema) {';
+    var after = '        if (Util.isEmpty(this._defaultVrstePrijema)) {';
+    rows.push({
+      kind: 'change', oldNo: oldNo, newNo: newNo, oldText: before, newText: after,
+      oldSpans: [[12, 13]], newSpans: [[12, 27]]
+    });
+
+    for (var j = 0; j < 6; j++) { same('            this._value = ' + j + ';'); }
+
+    oldNo++;
+    rows.push({ kind: 'del', oldNo: oldNo, newNo: null, oldText: '        // a line that went away', newText: null });
+    newNo++;
+    rows.push({ kind: 'add', oldNo: null, newNo: newNo, oldText: null, newText: '        // a line that arrived' });
+
+    for (var k = 0; k < 10; k++) { same('        return this._defaultVrstePrijema;'); }
+    rows.push({ kind: 'gap', oldNo: null, newNo: null, oldText: null, newText: null, skipped: 420 });
+    oldNo += 420; newNo += 420;
+    for (var m = 0; m < 8; m++) { same('    } // tail line ' + (m + 1)); }
+
+    return { path: path, binary: false, rows: rows, added: 2, removed: 2, changes: 2, truncated: false };
+  }
 </script>
 <script src="../media/virtual.js"></script>
+<script src="../media/diffview.js"></script>
 <script src="../media/repo.js"></script>
 </body>
 </html>

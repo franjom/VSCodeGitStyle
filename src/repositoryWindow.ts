@@ -1,5 +1,6 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { readFileDiff } from './diff';
 import { Git } from './git';
 import { GitApi } from './gitExtension';
 import {
@@ -50,7 +51,8 @@ type Inbound =
       path: string;
       origPath?: string;
       status: string;
-    };
+    }
+  | { type: 'fileDiff'; hash: string; path: string; origPath?: string };
 
 /**
  * The Git Repository window: Visual Studio's full-screen commit graph, as a
@@ -232,6 +234,10 @@ export class RepositoryWindow {
         case 'openFileDiff':
           await this.openFileDiff(message);
           return;
+
+        case 'fileDiff':
+          await this.sendFileDiff(message);
+          return;
       }
     } catch (err) {
       void vscode.window.showErrorMessage(
@@ -276,6 +282,34 @@ export class RepositoryWindow {
       this.post({
         type: 'commitDetails',
         details: null,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /**
+   * The side-by-side diff drawn inside the details pane. Errors travel to the
+   * webview rather than to a notification: the pane has a place to show one,
+   * and a file that cannot be read should not take the whole window with it.
+   */
+  private async sendFileDiff(
+    message: Extract<Inbound, { type: 'fileDiff' }>
+  ): Promise<void> {
+    try {
+      const diff = await readFileDiff(
+        this.git,
+        this.root,
+        message.hash,
+        message.path,
+        message.origPath
+      );
+      this.post({ type: 'fileDiff', hash: message.hash, path: message.path, diff });
+    } catch (err) {
+      this.post({
+        type: 'fileDiff',
+        hash: message.hash,
+        path: message.path,
+        diff: null,
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -361,6 +395,7 @@ export class RepositoryWindow {
 <div id="root" class="repo-shell"></div>
 <div id="menu" class="context-menu" hidden></div>
 <script nonce="${nonce}" src="${asset('virtual.js')}"></script>
+<script nonce="${nonce}" src="${asset('diffview.js')}"></script>
 <script nonce="${nonce}" src="${asset('repo.js')}"></script>
 </body>
 </html>`;

@@ -330,15 +330,18 @@ function collapseLocalGroup() {
 }
 
 /**
- * Drags the details splitter, selects a commit, then drags again. Selecting
+ * Drags the details divider, selects a commit, then drags again. Selecting
  * replaces the whole details pane, and a splitter holding the old element goes
  * on resizing a detached node - the drag looks dead until the next full render.
+ *
+ * The pane is docked across the bottom, so the divider moves vertically and
+ * dragging it upwards is what makes the pane taller.
  */
 function dragSplitterAroundSelection() {
   const rows = document.querySelector('.rows');
-  const splitter = [...document.querySelectorAll('.splitter')].pop();
-  const widthNow = function () {
-    return Math.round(document.querySelector('.details').getBoundingClientRect().width);
+  const splitter = document.querySelector('.splitter.horizontal');
+  const heightNow = function () {
+    return Math.round(document.querySelector('.details').getBoundingClientRect().height);
   };
 
   const drag = function (by) {
@@ -349,32 +352,77 @@ function dragSplitterAroundSelection() {
       new MouseEvent('mousedown', { bubbles: true, clientX: x, clientY: y })
     );
     document.dispatchEvent(
-      new MouseEvent('mousemove', { bubbles: true, clientX: x - by, clientY: y })
+      new MouseEvent('mousemove', { bubbles: true, clientX: x, clientY: y - by })
     );
-    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: x - by, clientY: y }));
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: x, clientY: y - by }));
     return settle();
   };
 
-  const before = widthNow();
+  const before = heightNow();
   return drag(60).then(function () {
-    const afterFirst = widthNow();
+    const afterFirst = heightNow();
     // Select a commit, which rebuilds the details pane.
     const row = rows.querySelector('.commit-row');
     row.click();
     return settle()
       .then(settle)
       .then(function () {
-        const afterSelect = widthNow();
+        const afterSelect = heightNow();
         return drag(60).then(function () {
           return {
             before: before,
             afterFirst: afterFirst,
             afterSelect: afterSelect,
-            afterSecond: widthNow(),
+            afterSecond: heightNow(),
           };
         });
       });
   });
+}
+
+/**
+ * Selects a commit and reports on the side-by-side diff it brings up: whether
+ * both sides were built, whether they line up row for row, and whether
+ * scrolling one carries the other with it.
+ */
+function inspectDiffPane() {
+  const row = document.querySelector('.rows .commit-row');
+  row.click();
+  return settle()
+    .then(settle)
+    .then(settle)
+    .then(function () {
+      const sides = [...document.querySelectorAll('.diff-side')];
+      if (sides.length !== 2) {
+        return { sides: sides.length };
+      }
+      const counts = sides.map(function (side) {
+        return side.querySelectorAll('.diff-row').length;
+      });
+      const heights = sides.map(function (side) {
+        return Math.round(side.querySelector('.diff-rows').getBoundingClientRect().height);
+      });
+
+      sides[0].scrollTop = 120;
+      return settle()
+        .then(settle)
+        .then(function () {
+          return {
+            sides: 2,
+            counts: counts,
+            heights: heights,
+            scrolled: sides[0].scrollTop,
+            follower: sides[1].scrollTop,
+            words: document.querySelectorAll('.diff-row .word').length,
+            added: document.querySelectorAll('.diff-row.k-add').length,
+            removed: document.querySelectorAll('.diff-row.k-del').length,
+            gaps: document.querySelectorAll('.diff-row.k-gap').length,
+            files: document.querySelectorAll('.changes .tree-row.change-file').length,
+            selectedFiles: document.querySelectorAll('.changes .tree-row.change-file.selected').length,
+            dirs: document.querySelectorAll('.changes .tree-row.group-node').length,
+          };
+        });
+    });
 }
 
 function timeRender() {
@@ -684,7 +732,7 @@ async function main() {
 
     const drag = await evaluate(cdp, dragSplitterAroundSelection);
     check(
-      'the details splitter resizes the pane',
+      'the details divider resizes the pane',
       drag.afterFirst > drag.before + 20,
       drag.before + 'px then ' + drag.afterFirst + 'px'
     );
@@ -692,6 +740,41 @@ async function main() {
       'the splitter still works after a commit is selected',
       drag.afterSecond > drag.afterSelect + 20,
       drag.afterSelect + 'px then ' + drag.afterSecond + 'px (selecting replaces the pane)'
+    );
+
+    const diff = await evaluate(cdp, inspectDiffPane);
+    check(
+      'selecting a commit builds both sides of the diff',
+      diff.sides === 2,
+      diff.sides + ' diff column(s)'
+    );
+    check(
+      'the two sides hold the same rows, so a deletion sits opposite its replacement',
+      diff.sides === 2 && diff.counts[0] === diff.counts[1] && diff.heights[0] === diff.heights[1],
+      diff.sides === 2
+        ? diff.counts.join(' vs ') + ' rows, ' + diff.heights.join('px vs ') + 'px'
+        : 'no diff'
+    );
+    check(
+      'scrolling one side carries the other with it',
+      diff.sides === 2 && diff.scrolled > 0 && diff.follower === diff.scrolled,
+      diff.sides === 2 ? diff.scrolled + 'px then ' + diff.follower + 'px' : 'no diff'
+    );
+    check(
+      'every row kind is drawn',
+      diff.sides === 2 && diff.added > 0 && diff.removed > 0 && diff.gaps > 0 && diff.words > 0,
+      diff.sides === 2
+        ? diff.added + ' added, ' + diff.removed + ' removed, ' + diff.gaps +
+          ' gap(s), ' + diff.words + ' highlighted word(s)'
+        : 'no diff'
+    );
+    check(
+      'the changes tree nests the files and opens on the first one',
+      diff.sides === 2 && diff.files > 0 && diff.dirs > 0 && diff.selectedFiles === 1,
+      diff.sides === 2
+        ? diff.files + ' file(s) under ' + diff.dirs + ' folder(s), ' +
+          diff.selectedFiles + ' selected'
+        : 'no diff'
     );
 
     const cleared = await evaluate(cdp, applyFilter, '');
