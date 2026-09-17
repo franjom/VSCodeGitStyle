@@ -504,6 +504,43 @@ function inspectDenseDiff() {
     });
 }
 
+/**
+ * Opens the minified bundle, whose lines run to tens of thousands of characters.
+ * Bounding the rows is not enough on its own: a line coloured token by token
+ * becomes a node per token, and a screenful of those is what hangs a renderer.
+ */
+function inspectWideDiff() {
+  const files = [...document.querySelectorAll('.changes .tree-row.change-file')];
+  const target = files.find(function (row) {
+    return row.querySelector('.label').textContent.indexOf('.min.js') !== -1;
+  });
+  const started = performance.now();
+  target.click();
+  return settle()
+    .then(settle)
+    .then(settle)
+    .then(function () {
+      const elapsed = Math.round(performance.now() - started);
+      const rows = [...document.querySelectorAll('.diff-row')];
+      let worst = 0;
+      for (const row of rows) {
+        const n = row.querySelectorAll('.code *').length;
+        if (n > worst) {
+          worst = n;
+        }
+      }
+      const host = document.querySelector('.diff-rows');
+      return {
+        elapsed: elapsed,
+        rows: rows.length,
+        worstRow: worst,
+        total: document.querySelectorAll('.diff-row .code *').length,
+        width: host ? Math.round(host.getBoundingClientRect().width) : -1,
+        highlighted: document.querySelectorAll('.diff-row .word').length,
+      };
+    });
+}
+
 /** Selects the first changed file, so the screenshot shows a representative diff. */
 function selectFirstFile() {
   const first = document.querySelector('.changes .tree-row.change-file');
@@ -919,6 +956,28 @@ async function main() {
       'and the other column follows it',
       dense.followerTop === dense.leaderTop,
       dense.leaderTop + 'px then ' + dense.followerTop + 'px'
+    );
+
+    const wide = await evaluate(cdp, inspectWideDiff);
+    check(
+      'a minified line is not drawn one element per token',
+      wide.worstRow > 0 && wide.worstRow <= 120,
+      wide.worstRow + ' elements in the busiest row, ' + wide.total + ' across the diff'
+    );
+    check(
+      'and it still opens promptly',
+      wide.elapsed < 2000,
+      wide.elapsed + ' ms from click to drawn'
+    );
+    check(
+      'the column is not stated millions of pixels wide',
+      wide.width > 0 && wide.width < 60000,
+      wide.width + 'px'
+    );
+    check(
+      'what changed in the line is still marked',
+      wide.highlighted > 0,
+      wide.highlighted + ' highlighted run(s)'
     );
 
     const cleared = await evaluate(cdp, applyFilter, '');

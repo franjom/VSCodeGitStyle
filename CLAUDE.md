@@ -125,6 +125,18 @@ The editor is a shared process. Two rules, both learned the hard way:
 windowed.** The commit list and the diff both use `visibleRange` from
 `media/virtual.js`. A 20,000-line file puts 80 rows in the DOM.
 
+**Bounding the rows is not enough — bound what is inside one.** The pane hung a
+second time with the windowing already in place, because a minified line was
+drawn one element per token: 496,452 elements and 10.3 seconds for forty rows.
+A line is capped at `MAX_SEGMENTS` pieces (colour is dropped first, the diff
+highlight last), not lexed at all past `MAX_LEXED_LINE`, and `widestLine` caps
+the stated column width. Ask of any per-row work what the worst single row
+costs, not what the average one does.
+
+**Nothing that runs per row may scan a list.** `mergeSegments` rescanned every
+token for every piece, which is quadratic in the length of a line. It walks
+with cursors now.
+
 **Never let the browser measure what you can state.** `width: max-content` on a
 windowed list defeats the windowing, because the browser lays out every row to
 find the widest. The diff states its width in `ch` from `widestLine`, since the

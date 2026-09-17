@@ -23,6 +23,11 @@
   function widestLine(lines, tabSize) {
     const tab = tabSize > 0 ? tabSize : 4;
     let widest = 0;
+    // Nobody scrolls a minified bundle to its end, and a column stated at its
+    // true width would be an element millions of pixels across. The text still
+    // overflows and is still all there; past this the row's tint simply stops
+    // following it.
+    const cap = 4000;
     for (const line of lines) {
       if (!line) {
         continue;
@@ -33,6 +38,9 @@
       }
       if (width > widest) {
         widest = width;
+      }
+      if (widest >= cap) {
+        return cap;
       }
     }
     return widest;

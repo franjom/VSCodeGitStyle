@@ -131,7 +131,8 @@
                 { status: 'A', path: 'tools/deploy.py' },
                 { status: 'M', path: 'Directory.Build.props' },
                 { status: 'M', path: 'package.json' },
-                { status: 'M', path: 'Mcs.Skzz.Data/Generated/Model.designer.cs' }
+                { status: 'M', path: 'Mcs.Skzz.Data/Generated/Model.designer.cs' },
+                { status: 'M', path: 'Mcs.Medicus.Spa/dist/bundle.min.js' }
               ],
               truncated: false,
               isMerge: c.parents.length > 1
@@ -169,6 +170,21 @@
         });
       }
       return { path: path, binary: false, rows: dense, added: 20000, removed: 20000, changes: 1, truncated: false };
+    }
+
+    // A minified bundle: few rows, but each line enormous. Bounded rows are not
+    // enough on their own - one row can hold a node per token.
+    if (path.indexOf('.min.js') !== -1) {
+      var wide = [];
+      for (var w = 1; w <= 40; w++) {
+        var text = 'var a' + w + '=function(x){return x+1},b=' + '{k:1,v:"s"},'.repeat(4000);
+        wide.push({
+          kind: 'change', oldNo: w, newNo: w,
+          oldText: text, newText: text.replace('return x+1', 'return x+2'),
+          oldSpans: [[10, 30]], newSpans: [[10, 30]]
+        });
+      }
+      return { path: path, binary: false, rows: wide, added: 40, removed: 40, changes: 1, truncated: false };
     }
 
     var rows = [];

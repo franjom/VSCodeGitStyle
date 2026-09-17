@@ -212,6 +212,71 @@ test('an empty line yields no segments', () => {
   assert.deepEqual(mergeSegments(0, [], []), []);
 });
 
+// -------------------------------------------------------------------- limits
+//
+// Every segment becomes an element and the diff draws a screenful of rows at a
+// time, so a line that becomes a node per token can put hundreds of thousands
+// of elements on the page. These are the bounds that stops it.
+
+test('a line past the lexing limit is not coloured at all', () => {
+  const long = 'var a=1;'.repeat(2000); // 16,000 characters
+  assert.equal(highlightLines([long], 'clike')[0], null);
+});
+
+test('a line within the limit is still coloured', () => {
+  const ordinary = 'const x = 1; // fine';
+  assert.ok(highlightLines([ordinary], 'clike')[0].length > 0);
+});
+
+test('a line needing too many pieces keeps its highlight and loses its colour', () => {
+  // What changed is the point of a diff; the colour is a convenience.
+  const tokens = [];
+  for (let i = 0; i < 400; i++) {
+    tokens.push({ start: i * 4, end: i * 4 + 2, type: 'keyword' });
+  }
+  const merged = mergeSegments(1600, tokens, [[0, 40]]);
+
+  assert.ok(merged.length <= 120, 'under the cap: ' + merged.length);
+  assert.ok(merged.some((s) => s.word), 'the change is still marked');
+  assert.ok(!merged.some((s) => s.type), 'the colouring is what was dropped');
+});
+
+test('a line needing far too many pieces is drawn as one', () => {
+  const spans = [];
+  for (let i = 0; i < 500; i++) {
+    spans.push([i * 4, i * 4 + 2]);
+  }
+  const merged = mergeSegments(2000, [], spans);
+  assert.deepEqual(merged, [{ start: 0, end: 2000, type: null, word: false }]);
+});
+
+test('an ordinary line of code is nowhere near the cap', () => {
+  const text = '        if (Util.isEmpty(this._defaultVrstePrijema)) { return null; }';
+  const merged = mergeSegments(text.length, highlightLines([text], 'clike')[0], [[12, 27]]);
+  assert.ok(merged.length < 30, 'it took ' + merged.length + ' pieces');
+  assert.ok(merged.some((s) => s.type), 'and it is still coloured');
+});
+
+test('merging stays linear as a line grows', () => {
+  // It used to rescan every token for every piece, which is the shape that
+  // hangs a renderer on a minified file.
+  const build = (n) => {
+    const tokens = [];
+    for (let i = 0; i < n; i++) {
+      tokens.push({ start: i * 4, end: i * 4 + 2, type: 'keyword' });
+    }
+    const started = process.hrtime.bigint();
+    mergeSegments(n * 4, tokens, []);
+    return Number(process.hrtime.bigint() - started);
+  };
+  build(1000); // warm up
+  const small = Math.max(build(2000), 1);
+  const large = build(20000);
+
+  // Ten times the tokens must not cost a hundred times the work.
+  assert.ok(large < small * 40, 'ten times the input took ' + (large / small).toFixed(1) + 'x');
+});
+
 test('a span reaching past the end of the line does not invent a segment', () => {
   const merged = mergeSegments(5, [], [[3, 99]]);
   assert.equal(merged[merged.length - 1].end, 5);

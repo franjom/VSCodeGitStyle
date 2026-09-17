@@ -129,6 +129,15 @@
     },
   };
 
+  /**
+   * Past this many characters a line is not coloured at all.
+   *
+   * Lexing is linear and cheap, but everything downstream of it is not: the
+   * tokens become pieces and the pieces become elements. VS Code's own editor
+   * stops tokenizing long lines for the same reason.
+   */
+  const MAX_LEXED_LINE = 10000;
+
   const BY_EXTENSION = {
     ts: 'clike', tsx: 'clike', js: 'clike', jsx: 'clike', mjs: 'clike', cjs: 'clike',
     mts: 'clike', cts: 'clike',
@@ -187,6 +196,13 @@
     let state = null;
     return lines.map(function (line) {
       if (line === null || line === undefined) {
+        return null;
+      }
+      if (line.length > MAX_LEXED_LINE) {
+        // Left uncoloured, as VS Code's own editor leaves a line past its
+        // tokenization limit. The carried state is deliberately not touched:
+        // the lines this spares are minified or data, and far likelier to
+        // contain an apostrophe or a stray /* than to open one meaningfully.
         return null;
       }
       const result = lang.markup ? lexMarkup(line, lang, state) : lexCode(line, lang, state);
@@ -426,6 +442,18 @@
   }
 
   /**
+   * How many pieces a line may be drawn in.
+   *
+   * Every piece is an element, and the diff draws a screenful of rows at a
+   * time, so a line that becomes a node per token is a line that can put
+   * hundreds of thousands of elements on the page. A minified bundle, a
+   * sourcemap or a long JSON line does exactly that. Past this the colouring is
+   * dropped and only the diff highlight is kept, since what changed is the
+   * point of a diff and the colour is a convenience.
+   */
+  const MAX_SEGMENTS = 120;
+
+  /**
    * Cuts a line into the pieces one pass of spans can draw.
    *
    * A line carries two independent markings - what the lexer coloured and what
@@ -438,31 +466,60 @@
     if (length <= 0) {
       return [];
     }
-    const cuts = [0, length];
-    for (const token of tokens || []) {
-      cuts.push(token.start, token.end);
+    const cut = cutInto(length, tokens, spans);
+    if (cut.length <= MAX_SEGMENTS) {
+      return cut;
     }
-    for (const span of spans || []) {
-      cuts.push(span[0], span[1]);
-    }
+    // Too many pieces to draw. Keeping the highlight and dropping the colour
+    // almost always gets under the cap on its own, because what changed in a
+    // line is a handful of runs however many tokens the line has.
+    const highlightOnly = cutInto(length, null, spans);
+    return highlightOnly.length <= MAX_SEGMENTS
+      ? highlightOnly
+      : [{ start: 0, end: length, type: null, word: false }];
+  }
 
-    const points = cuts
-      .filter(function (p) {
-        return p >= 0 && p <= length;
-      })
-      .sort(function (a, b) {
-        return a - b;
-      });
+  /**
+   * The merge itself, walked with a cursor per list rather than by searching
+   * them for every piece. Both arrive in order, so nothing has to be scanned
+   * twice - which matters, because a line long enough to need the cap above is
+   * exactly the line a quadratic merge would hang on.
+   */
+  function cutInto(length, tokens, spans) {
+    const tokenList = tokens || [];
+    const spanList = spans || [];
+    const points = [0, length];
+    for (const token of tokenList) {
+      points.push(token.start, token.end);
+    }
+    for (const span of spanList) {
+      points.push(span[0], span[1]);
+    }
+    points.sort(function (a, b) {
+      return a - b;
+    });
 
     const out = [];
+    let tokenAt = 0;
+    let spanAt = 0;
+
     for (let i = 0; i < points.length - 1; i++) {
       const start = points[i];
       const end = points[i + 1];
-      if (end <= start) {
+      if (end <= start || start < 0 || end > length) {
         continue;
       }
-      const type = typeAt(tokens, start);
-      const word = inSpan(spans, start);
+      while (tokenAt < tokenList.length && tokenList[tokenAt].end <= start) {
+        tokenAt++;
+      }
+      while (spanAt < spanList.length && spanList[spanAt][1] <= start) {
+        spanAt++;
+      }
+      const token = tokenList[tokenAt];
+      const span = spanList[spanAt];
+      const type = token && start >= token.start ? token.type : null;
+      const word = !!(span && start >= span[0]);
+
       const last = out[out.length - 1];
       if (last && last.end === start && last.type === type && last.word === word) {
         last.end = end;
@@ -471,24 +528,6 @@
       out.push({ start: start, end: end, type: type, word: word });
     }
     return out;
-  }
-
-  function typeAt(tokens, at) {
-    for (const token of tokens || []) {
-      if (at >= token.start && at < token.end) {
-        return token.type;
-      }
-    }
-    return null;
-  }
-
-  function inSpan(spans, at) {
-    for (const span of spans || []) {
-      if (at >= span[0] && at < span[1]) {
-        return true;
-      }
-    }
-    return false;
   }
 
   const api = {

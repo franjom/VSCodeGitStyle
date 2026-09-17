@@ -39,6 +39,16 @@ test('blank and missing lines do not count', () => {
   assert.equal(widestLine([null, null], 4), 0);
 });
 
+test('a minified line does not ask for a column millions of pixels wide', () => {
+  const minified = 'var a=1;'.repeat(100000); // 800,000 characters
+  assert.equal(widestLine([minified], 4), 4000, 'capped');
+  assert.equal(widestLine(['short', minified], 4), 4000, 'and the cap wins over the others');
+});
+
+test('the cap does not disturb a file of ordinary lines', () => {
+  assert.equal(widestLine(['a'.repeat(300), 'b'.repeat(120)], 4), 300);
+});
+
 test('an absent tab size falls back to four', () => {
   assert.equal(widestLine(['	x'], 0), 5);
   assert.equal(widestLine(['	x'], undefined), 5);
