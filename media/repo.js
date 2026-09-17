@@ -27,6 +27,7 @@
 
   const visibleRange = self.VsgVirtual.visibleRange;
   const diffView = self.VsgDiffView;
+  const syntax = self.VsgSyntax;
 
   const persisted = vscode.getState() || {};
 
@@ -250,6 +251,7 @@
   function render() {
     const rowsScroller = root.querySelector('.rows');
     const scrollTop = rowsScroller ? rowsScroller.scrollTop : 0;
+    const railTop = railScrollTop();
 
     root.textContent = '';
     root.appendChild(renderToolbar());
@@ -318,6 +320,7 @@
     if (newScroller) {
       newScroller.scrollTop = scrollTop;
     }
+    restoreRailScroll(railTop);
     // Only now is the pane laid out, which is what the row windows measure
     // themselves against.
     syncWindows();
@@ -1058,8 +1061,24 @@
     if (!state.detailsMax) {
       next.style.flexBasis = state.detailsHeight + 'px';
     }
+    // The rail is rebuilt whole on every file click, so without this the tree
+    // jumps back to the top and the file just clicked scrolls out of reach.
+    const railTop = railScrollTop();
     existing.replaceWith(next);
+    restoreRailScroll(railTop);
     installDiffScroll();
+  }
+
+  function railScrollTop() {
+    const scroller = root.querySelector('.meta-rail .scroll');
+    return scroller ? scroller.scrollTop : 0;
+  }
+
+  function restoreRailScroll(top) {
+    const scroller = root.querySelector('.meta-rail .scroll');
+    if (scroller && top) {
+      scroller.scrollTop = top;
+    }
   }
 
   function renderDetails() {
@@ -1253,7 +1272,21 @@
     const list = el('div', 'diff-rows');
     const isOld = side === 'old';
 
+    // Colouring is done for the side in one pass rather than line by line: a
+    // block comment or a docstring only makes sense in the context of the lines
+    // above it. A renamed file may well change language, so each side asks
+    // about its own name.
+    const named = isOld ? state.fileDiff.origPath || state.fileDiff.path : state.fileDiff.path;
+    const highlights = syntax.highlightLines(
+      rows.map(function (row) {
+        return isOld ? row.oldText : row.newText;
+      }),
+      syntax.languageFor(named)
+    );
+
+    let at = -1;
     for (const row of rows) {
+      at++;
       const text = isOld ? row.oldText : row.newText;
       const lineNo = isOld ? row.oldNo : row.newNo;
 
@@ -1280,7 +1313,9 @@
           )
         );
       } else {
-        node.appendChild(renderCode(text, isOld ? row.oldSpans : row.newSpans));
+        node.appendChild(
+          renderCode(text, isOld ? row.oldSpans : row.newSpans, highlights[at])
+        );
       }
       list.appendChild(node);
     }
@@ -1290,29 +1325,40 @@
   }
 
   /**
-   * A line of code with the parts that differ picked out. The text goes in as
-   * text nodes rather than as markup, so a line containing angle brackets stays
-   * a line of code.
+   * A line of code, carrying both its syntax colouring and the parts the diff
+   * found changed. The two overlap freely, so the line is cut at every boundary
+   * of either and each piece gets whichever of the two apply to it.
+   *
+   * Text goes in as text nodes rather than as markup, so a line containing
+   * angle brackets stays a line of code.
    */
-  function renderCode(text, spans) {
+  function renderCode(text, spans, tokens) {
     const node = el('span', 'code');
     if (text === null) {
       return node;
     }
-    if (!spans || !spans.length) {
+    const segments = syntax.mergeSegments(text.length, tokens, spans);
+    // The overwhelmingly common case: a line with nothing to mark, which is
+    // one text node rather than a span.
+    if (segments.length <= 1 && (!segments[0] || (!segments[0].type && !segments[0].word))) {
       node.textContent = text;
       return node;
     }
-    let at = 0;
-    for (const span of spans) {
-      if (span[0] > at) {
-        node.appendChild(document.createTextNode(text.slice(at, span[0])));
+
+    for (const segment of segments) {
+      const piece = text.slice(segment.start, segment.end);
+      if (!segment.type && !segment.word) {
+        node.appendChild(document.createTextNode(piece));
+        continue;
       }
-      node.appendChild(el('span', 'word', text.slice(span[0], span[1])));
-      at = span[1];
-    }
-    if (at < text.length) {
-      node.appendChild(document.createTextNode(text.slice(at)));
+      const classes = [];
+      if (segment.type) {
+        classes.push('tok-' + segment.type);
+      }
+      if (segment.word) {
+        classes.push('word');
+      }
+      node.appendChild(el('span', classes.join(' '), piece));
     }
     return node;
   }

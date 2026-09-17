@@ -414,6 +414,11 @@ function inspectDiffPane() {
             scrolled: sides[0].scrollTop,
             follower: sides[1].scrollTop,
             words: document.querySelectorAll('.diff-row .word').length,
+            keywords: document.querySelectorAll('.diff-row .tok-keyword').length,
+            comments: document.querySelectorAll('.diff-row .tok-comment').length,
+            // A piece that is both changed and coloured proves the two
+            // markings compose rather than one winning.
+            both: document.querySelectorAll('.diff-row .word.tok-keyword, .diff-row .word.tok-type, .diff-row .word.tok-string').length,
             added: document.querySelectorAll('.diff-row.k-add').length,
             removed: document.querySelectorAll('.diff-row.k-del').length,
             gaps: document.querySelectorAll('.diff-row.k-gap').length,
@@ -423,6 +428,45 @@ function inspectDiffPane() {
           };
         });
     });
+}
+
+/**
+ * Scrolls the metadata rail down, clicks another file, and reports where the
+ * rail ended up. Selecting a file rebuilds the whole pane, and a rail that
+ * starts again from the top puts the file just clicked out of reach.
+ */
+function railScrollAcrossFileClick() {
+  const scroller = document.querySelector('.meta-rail .scroll');
+  scroller.scrollTop = scroller.scrollHeight;
+  return settle().then(function () {
+    const before = scroller.scrollTop;
+    const files = [...document.querySelectorAll('.changes .tree-row.change-file')];
+    const target = files[files.length - 1];
+    const name = target.querySelector('.label').textContent;
+    target.click();
+    return settle()
+      .then(settle)
+      .then(function () {
+        const after = document.querySelector('.meta-rail .scroll');
+        return {
+          scrollable: before > 0,
+          before: before,
+          after: after ? after.scrollTop : -1,
+          clicked: name,
+          selected: (document.querySelector('.changes .tree-row.change-file.selected .label') || {})
+            .textContent,
+        };
+      });
+  });
+}
+
+/** Selects the first changed file, so the screenshot shows a representative diff. */
+function selectFirstFile() {
+  const first = document.querySelector('.changes .tree-row.change-file');
+  if (first) {
+    first.click();
+  }
+  return settle().then(settle);
 }
 
 function timeRender() {
@@ -777,6 +821,33 @@ async function main() {
         : 'no diff'
     );
 
+    check(
+      'the diff is syntax coloured',
+      diff.sides === 2 && diff.keywords > 0 && diff.comments > 0,
+      diff.sides === 2
+        ? diff.keywords + ' keyword(s), ' + diff.comments + ' comment(s)'
+        : 'no diff'
+    );
+    check(
+      'a changed word keeps its colour as well as its highlight',
+      diff.sides === 2 && diff.both > 0,
+      diff.sides === 2 ? diff.both + ' piece(s) carrying both' : 'no diff'
+    );
+
+    const rail = await evaluate(cdp, railScrollAcrossFileClick);
+    check(
+      'clicking a file leaves the changes tree where it was',
+      rail.scrollable && rail.after === rail.before,
+      rail.scrollable
+        ? 'scrolled to ' + rail.before + 'px, left at ' + rail.after + 'px'
+        : 'the rail did not scroll, so the check proves nothing'
+    );
+    check(
+      'clicking a file selects that file',
+      rail.selected === rail.clicked,
+      'clicked ' + rail.clicked + ', selected ' + rail.selected
+    );
+
     const cleared = await evaluate(cdp, applyFilter, '');
     check(
       'clearing the filter restores the whole history',
@@ -786,6 +857,7 @@ async function main() {
 
     if (shot) {
       await evaluate(cdp, scrollTo, Math.floor(fullHeight / 2));
+      await evaluate(cdp, selectFirstFile);
       const image = await cdp.send('Page.captureScreenshot', { format: 'png' });
       fs.writeFileSync(shot, Buffer.from(image.data, 'base64'));
       console.log('\nscreenshot: ' + shot);

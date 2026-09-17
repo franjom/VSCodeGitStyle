@@ -799,6 +799,57 @@ body {
   font-size: 11px;
 }
 
+/* Token colours.
+   VS Code does not publish a theme's editor token colours to a webview, so
+   these are Dark Modern's, with the light set applied under the class VS Code
+   puts on the body. Anything else - high contrast, a custom theme - keeps the
+   dark set, which stays legible because the pane is drawn on the editor's own
+   background. */
+:root {
+  --vsg-tok-comment: #6a9955;
+  --vsg-tok-keyword: #569cd6;
+  --vsg-tok-string: #ce9178;
+  --vsg-tok-number: #b5cea8;
+  --vsg-tok-type: #4ec9b0;
+}
+
+body.vscode-light {
+  --vsg-tok-comment: #008000;
+  --vsg-tok-keyword: #0000ff;
+  --vsg-tok-string: #a31515;
+  --vsg-tok-number: #098658;
+  --vsg-tok-type: #267f99;
+}
+
+body.vscode-high-contrast-light {
+  --vsg-tok-comment: #006000;
+  --vsg-tok-keyword: #0000c0;
+  --vsg-tok-string: #900000;
+  --vsg-tok-number: #005000;
+  --vsg-tok-type: #005070;
+}
+
+.tok-comment {
+  color: var(--vsg-tok-comment);
+  font-style: italic;
+}
+
+.tok-keyword {
+  color: var(--vsg-tok-keyword);
+}
+
+.tok-string {
+  color: var(--vsg-tok-string);
+}
+
+.tok-number {
+  color: var(--vsg-tok-number);
+}
+
+.tok-type {
+  color: var(--vsg-tok-type);
+}
+
 .diff-row.k-add .word {
   background: var(--vscode-diffEditor-insertedTextBackground, rgba(107, 176, 107, 0.3));
   border-radius: 2px;

@@ -118,9 +118,18 @@
               body: 'Preview harness: this body and file list are synthesized.',
               files: [
                 { status: 'M', path: 'Mcs.Skzz.Api/Controllers/Api/WidgetSettings/WidgetSettingsController.cs' },
+                { status: 'M', path: 'Mcs.Skzz.Api/Controllers/Api/WidgetSettings/WidgetSettingsModel.cs' },
                 { status: 'A', path: 'Mcs.Skzz.Data/Repositories/WidgetSettingRepository.cs' },
+                { status: 'M', path: 'Mcs.Skzz.Data/Migrations/20260911_AddWidgetSettings.sql' },
                 { status: 'D', path: 'Mcs.Skzz.Common/Helpers/DateHelper.cs' },
-                { status: 'R', path: 'Mcs.Medicus.Spa/src/styles/theme.scss', origPath: 'Mcs.Medicus.Spa/src/theme.scss' }
+                { status: 'M', path: 'Mcs.Skzz.Common/Helpers/StringHelper.cs' },
+                { status: 'R', path: 'Mcs.Medicus.Spa/src/styles/theme.scss', origPath: 'Mcs.Medicus.Spa/src/theme.scss' },
+                { status: 'M', path: 'Mcs.Medicus.Spa/src/business/core/services/SessionVrstePrijema.ts' },
+                { status: 'M', path: 'Mcs.Medicus.Spa/src/business/module.common/viewmodels/PosjetNoviViewModel.ts' },
+                { status: 'M', path: 'Mcs.Medicus.Spa/src/index.html' },
+                { status: 'A', path: 'tools/deploy.py' },
+                { status: 'M', path: 'Directory.Build.props' },
+                { status: 'M', path: 'package.json' }
               ],
               truncated: false,
               isMerge: c.parents.length > 1
@@ -181,6 +190,7 @@
 </script>
 <script src="../media/virtual.js"></script>
 <script src="../media/diffview.js"></script>
+<script src="../media/syntax.js"></script>
 <script src="../media/repo.js"></script>
 </body>
 </html>

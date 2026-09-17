@@ -396,6 +396,7 @@ export class RepositoryWindow {
 <div id="menu" class="context-menu" hidden></div>
 <script nonce="${nonce}" src="${asset('virtual.js')}"></script>
 <script nonce="${nonce}" src="${asset('diffview.js')}"></script>
+<script nonce="${nonce}" src="${asset('syntax.js')}"></script>
 <script nonce="${nonce}" src="${asset('repo.js')}"></script>
 </body>
 </html>`;
