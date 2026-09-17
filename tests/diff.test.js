@@ -204,10 +204,56 @@ test('adjacent changed tokens merge into one span', () => {
   assert.equal('a yy zz'.slice(spans.new[0][0], spans.new[0][1]), 'yy zz');
 });
 
-test('a very long line is marked whole rather than word by word', () => {
+test('a long line is trimmed to what differs, however long it is', () => {
+  // Nothing before the change needs comparing, so the length of the line is no
+  // longer what the work costs.
   const long = new Array(900).fill('tok').join(' ');
   const spans = intraLineSpans(long, long + ' end');
-  assert.deepEqual(spans.new, [[0, long.length + 4]]);
+  assert.deepEqual(spans.new, [[long.length, long.length + 4]], 'only the added tail');
+  assert.deepEqual(spans.old, []);
+});
+
+test('a change in the middle of a long line is still found exactly', () => {
+  const head = new Array(500).fill('tok').join(' ');
+  const tail = new Array(500).fill('end').join(' ');
+  const before = head + ' MIDDLE ' + tail;
+  const after = head + ' CHANGED ' + tail;
+  const spans = intraLineSpans(before, after);
+
+  assert.equal(spans.new.length, 1);
+  assert.equal(after.slice(spans.new[0][0], spans.new[0][1]), 'CHANGED');
+  assert.equal(before.slice(spans.old[0][0], spans.old[0][1]), 'MIDDLE');
+});
+
+test('a rewritten line marks the middle whole rather than picking it apart', () => {
+  // Nothing shared at either end, and too much differing between them to have
+  // a word-level story worth telling.
+  const before = new Array(200).fill(0).map((_, i) => 'alpha' + i).join(' ');
+  const after = new Array(200).fill(0).map((_, i) => 'omega' + i).join(' ');
+  const spans = intraLineSpans(before, after);
+
+  assert.deepEqual(spans.old, [[0, before.length]]);
+  assert.deepEqual(spans.new, [[0, after.length]]);
+});
+
+test('finding the spans does not get slower with the length of the line', () => {
+  // This is what wedged the extension host: the table was quadratic in the
+  // whole line rather than in the part that differed.
+  const run = (n) => {
+    const head = new Array(n).fill('tok').join(' ');
+    const before = head + ' one';
+    const after = head + ' two';
+    const started = process.hrtime.bigint();
+    for (let i = 0; i < 200; i++) {
+      intraLineSpans(before, after);
+    }
+    return Number(process.hrtime.bigint() - started);
+  };
+  run(100); // warm up
+  const small = Math.max(run(200), 1);
+  const large = run(2000);
+
+  assert.ok(large < small * 40, 'ten times the line took ' + (large / small).toFixed(1) + 'x');
 });
 
 // ------------------------------------------------------------- against git

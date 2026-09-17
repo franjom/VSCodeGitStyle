@@ -65,8 +65,13 @@ const FALLBACK_CONTEXT = 6;
  */
 const MAX_DIFF_BYTES = 4 * 1024 * 1024;
 
-/** Lines longer than this are marked changed end to end rather than word by word. */
-const MAX_SPAN_TOKENS = 400;
+/**
+ * How many differing tokens are worth a table. Applied to what is left after
+ * the shared head and tail are trimmed, so eighty is generous: an edit leaving
+ * more than eighty tokens differing in the middle of one line has no word-level
+ * story left to tell.
+ */
+const MAX_SPAN_TOKENS = 80;
 
 /**
  * The preamble git prints for a file before its first hunk. Matched only there,
@@ -297,16 +302,44 @@ export function intraLineSpans(
   oldText: string,
   newText: string
 ): { old: Span[]; new: Span[] } {
-  const a = tokenize(oldText);
-  const b = tokenize(newText);
+  const all = tokenize(oldText);
+  const bll = tokenize(newText);
 
-  // The table below is quadratic. A minified bundle or a data line can run to
-  // thousands of tokens, where the highlight is worth neither the time nor the
-  // memory, so the whole line is simply marked.
+  // What the two lines share at each end is trimmed before the table below is
+  // built, because the table is quadratic in what is left and an edit almost
+  // always leaves the indentation and the tail of the line alone. Without this
+  // a reformatted file pays for the whole of every line: 1.08 ms each at two
+  // hundred tokens, which is twenty seconds of extension host for twenty
+  // thousand lines, and a wedged window while it runs.
+  let head = 0;
+  while (head < all.length && head < bll.length && all[head] === bll[head]) {
+    head++;
+  }
+  let tail = 0;
+  while (
+    tail < all.length - head &&
+    tail < bll.length - head &&
+    all[all.length - 1 - tail] === bll[bll.length - 1 - tail]
+  ) {
+    tail++;
+  }
+
+  const a = all.slice(head, all.length - tail);
+  const b = bll.slice(head, bll.length - tail);
+  const oldFrom = width(all, 0, head);
+  const newFrom = width(bll, 0, head);
+
+  if (a.length === 0 && b.length === 0) {
+    return { old: [], new: [] };
+  }
+
+  // Still too much differing between the shared ends to be worth picking apart
+  // word by word - a rewritten line, or a data line with no structure in
+  // common. Marking the middle whole says the same thing for less.
   if (a.length > MAX_SPAN_TOKENS || b.length > MAX_SPAN_TOKENS) {
     return {
-      old: oldText ? [[0, oldText.length]] : [],
-      new: newText ? [[0, newText.length]] : [],
+      old: a.length ? [[oldFrom, oldFrom + width(a, 0, a.length)]] : [],
+      new: b.length ? [[newFrom, newFrom + width(b, 0, b.length)]] : [],
     };
   }
 
@@ -327,8 +360,9 @@ export function intraLineSpans(
 
   const oldSpans: Span[] = [];
   const newSpans: Span[] = [];
-  let oldAt = 0;
-  let newAt = 0;
+  // Offsets are into the whole line, not the trimmed middle the table covers.
+  let oldAt = oldFrom;
+  let newAt = newFrom;
   let i = 0;
   let j = 0;
   while (i < a.length && j < b.length) {
@@ -357,6 +391,15 @@ export function intraLineSpans(
   }
 
   return { old: oldSpans, new: newSpans };
+}
+
+/** Characters spanned by tokens [from, to). */
+function width(tokens: string[], from: number, to: number): number {
+  let total = 0;
+  for (let i = from; i < to; i++) {
+    total += tokens[i]!.length;
+  }
+  return total;
 }
 
 /** Appends a range, merging it into the previous one when they touch. */
