@@ -414,22 +414,27 @@ export interface StatusLists {
 }
 
 /**
- * How many changed files the activity bar badge reports. A path that is edited
- * both in the index and in the working tree is one changed file rather than
- * two, and ignored files are not changes at all.
+ * How many changed files the activity bar badge reports: the panel's own
+ * sections added up. Ignored files are not changes at all and never count.
+ *
+ * A path stages one change and is then edited again, so it is listed under both
+ * Staged Changes and Changes - and it counts under both, because the badge
+ * summarises what the panel shows. Counting distinct paths instead would leave
+ * the badge reading 35 beside sections headed 8 and 34, and disagreeing with
+ * the built-in Git view besides, which totals its sections the same way.
  *
  * Exported as a pure function so the badge and the panel count the same way.
  */
 export function countChanges(lists: StatusLists): number {
-  const paths = new Set<string>();
+  let total = 0;
   for (const list of [lists.staged, lists.unstaged, lists.conflicts]) {
     for (const change of list) {
       if (change.status !== 'ignored') {
-        paths.add(change.path);
+        total++;
       }
     }
   }
-  return paths.size;
+  return total;
 }
 
 /**

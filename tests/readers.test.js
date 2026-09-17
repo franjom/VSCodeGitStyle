@@ -61,7 +61,7 @@ test('snapshot reports every change type in the right list', async (t) => {
   assert.equal(snapshot.operation, undefined);
 });
 
-test('the badge counts each changed file once, ignoring ignored files', async (t) => {
+test('the badge totals the panel sections, ignoring ignored files', async (t) => {
   const repo = repoWithEveryChange();
   t.after(() => repo.dispose());
   repo.write('.gitignore', 'bin/\n');
@@ -73,10 +73,43 @@ test('the badge counts each changed file once, ignoring ignored files', async (t
     'the ignored file is in the list the panel shows'
   );
 
-  // Added, Both, Deleted, Modified, Untracked, new name, .gitignore - and
-  // Both.cs is staged as well as edited again, so it must not count twice.
-  assert.equal(countChanges(snapshot), 7);
-  assert.equal(await git.changeCount(repo.dir), 7, 'the cheap count agrees');
+  const listed =
+    snapshot.staged.length +
+    snapshot.unstaged.filter((c) => c.status !== 'ignored').length +
+    snapshot.conflicts.length;
+  assert.equal(countChanges(snapshot), listed, 'the badge is what the sections add up to');
+  assert.equal(await git.changeCount(repo.dir), listed, 'the cheap count agrees');
+});
+
+test('a file staged and then edited again counts under both sections', async (t) => {
+  // It is listed twice in the panel - once under Staged Changes and once under
+  // Changes - so a badge counting distinct paths would read lower than the two
+  // headings it sits above, and lower than the built-in Git view beside it.
+  const repo = new TestRepo();
+  t.after(() => repo.dispose());
+  repo.write('Both.cs', 'one');
+  repo.commit('Initial');
+  repo.write('Both.cs', 'one staged');
+  repo.git(['add', 'Both.cs']);
+  repo.write('Both.cs', 'one staged and more');
+
+  const snapshot = await git.snapshot(repo.dir, false);
+  assert.equal(snapshot.staged.length, 1);
+  assert.equal(snapshot.unstaged.length, 1);
+  assert.equal(countChanges(snapshot), 2, 'once for each section it appears in');
+});
+
+test('ignored files never reach the badge, however many there are', async (t) => {
+  const repo = new TestRepo();
+  t.after(() => repo.dispose());
+  repo.write('.gitignore', 'bin/');
+  repo.commit('Initial');
+  repo.write('bin/a.dll', 'x');
+  repo.write('bin/b.dll', 'x');
+
+  const snapshot = await git.snapshot(repo.dir, true);
+  assert.ok(snapshot.unstaged.some((c) => c.status === 'ignored'), 'they are listed');
+  assert.equal(countChanges(snapshot), 0, 'but none of them is a change');
 });
 
 test('snapshot reads the branch, and ahead/behind without an upstream', async (t) => {
