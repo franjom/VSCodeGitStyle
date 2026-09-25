@@ -541,6 +541,88 @@ function inspectWideDiff() {
     });
 }
 
+/**
+ * Every way out of a context menu.
+ *
+ * A menu that can only be dismissed by choosing something is a trap, and this
+ * regressed once without anything noticing: the dismissals lived in each
+ * webview and were dropped when the two copies were merged into media/dom.js.
+ */
+function inspectMenuDismissal() {
+  const menu = document.getElementById('menu');
+  const rowOf = function () {
+    return document.querySelector('.rows .commit-row');
+  };
+  const open = function () {
+    rowOf().dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 300, clientY: 300 })
+    );
+    return settle();
+  };
+  const shown = function () {
+    return !menu.hidden;
+  };
+
+  const result = {};
+  return open()
+    .then(function () {
+      result.opens = shown();
+      document.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      );
+      return settle();
+    })
+    .then(function () {
+      result.escape = !shown();
+      return open();
+    })
+    .then(function () {
+      document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      return settle();
+    })
+    .then(function () {
+      result.clickAway = !shown();
+      return open();
+    })
+    .then(function () {
+      // A right-click on something with no menu of its own.
+      document.body.dispatchEvent(
+        new MouseEvent('contextmenu', { bubbles: true, cancelable: true })
+      );
+      return settle();
+    })
+    .then(function () {
+      result.rightClickAway = !shown();
+      return open();
+    })
+    .then(function () {
+      document.querySelector('.rows').dispatchEvent(new WheelEvent('wheel', { bubbles: true }));
+      return settle();
+    })
+    .then(function () {
+      result.scroll = !shown();
+      return open();
+    })
+    .then(function () {
+      window.dispatchEvent(new Event('blur'));
+      return settle();
+    })
+    .then(function () {
+      result.blur = !shown();
+      return open();
+    })
+    .then(function () {
+      // And the way that always worked: picking something.
+      result.itemCount = menu.querySelectorAll('.item').length;
+      menu.querySelector('.item').click();
+      return settle();
+    })
+    .then(function () {
+      result.choosing = !shown();
+      return result;
+    });
+}
+
 /** Selects the first changed file, so the screenshot shows a representative diff. */
 function selectFirstFile() {
   const first = document.querySelector('.changes .tree-row.change-file');
@@ -979,6 +1061,21 @@ async function main() {
       wide.highlighted > 0,
       wide.highlighted + ' highlighted run(s)'
     );
+
+    const menu = await evaluate(cdp, inspectMenuDismissal);
+    check('a right-click opens the context menu', menu.opens && menu.itemCount > 0,
+      menu.itemCount + ' item(s)');
+    check('Escape closes it', menu.escape, String(menu.escape));
+    check('a click elsewhere closes it', menu.clickAway, String(menu.clickAway));
+    check('a right-click elsewhere closes it', menu.rightClickAway, String(menu.rightClickAway));
+    check('turning the wheel closes it', menu.scroll, String(menu.scroll));
+    check(
+      'but the re-render that opening it causes does not',
+      menu.opens,
+      'a programmatic scroll restore must not count as scrolling'
+    );
+    check('losing focus closes it', menu.blur, String(menu.blur));
+    check('and choosing an item still closes it', menu.choosing, String(menu.choosing));
 
     const cleared = await evaluate(cdp, applyFilter, '');
     check(

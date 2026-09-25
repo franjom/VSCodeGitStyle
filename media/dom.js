@@ -89,6 +89,9 @@
       menuEl.appendChild(row);
     }
 
+    installDismissals();
+    openMenu = menuEl;
+
     // Shown before it is placed, because it has to be laid out before there is
     // a size to keep on screen.
     menuEl.hidden = false;
@@ -104,6 +107,78 @@
 
   function hideMenu(menuEl) {
     menuEl.hidden = true;
+    if (openMenu === menuEl) {
+      openMenu = null;
+    }
+  }
+
+  /** The menu on screen, so the dismissals below know what to close. */
+  let openMenu = null;
+  let dismissalsInstalled = false;
+
+  /**
+   * Every way a context menu is normally dismissed.
+   *
+   * Without these the only way out is to pick something, which makes a menu
+   * opened by accident a trap. Installed on the first menu rather than at load,
+   * so a page that never opens one pays nothing.
+   */
+  function installDismissals() {
+    if (dismissalsInstalled) {
+      return;
+    }
+    dismissalsInstalled = true;
+
+    // Capturing, because a focused input or textarea would otherwise handle
+    // Escape first and the menu would sit there through it.
+    document.addEventListener(
+      'keydown',
+      function (event) {
+        if (openMenu && (event.key === 'Escape' || event.key === 'Esc')) {
+          event.preventDefault();
+          event.stopPropagation();
+          hideMenu(openMenu);
+        }
+      },
+      true
+    );
+
+    document.addEventListener('click', function () {
+      if (openMenu) {
+        hideMenu(openMenu);
+      }
+    });
+
+    // A right-click meant for somewhere else. The handler that opens a menu
+    // stops propagation, so this only sees the clicks that open nothing.
+    document.addEventListener('contextmenu', function (event) {
+      if (openMenu && !openMenu.contains(event.target)) {
+        hideMenu(openMenu);
+      }
+    });
+
+    window.addEventListener('blur', function () {
+      if (openMenu) {
+        hideMenu(openMenu);
+      }
+    });
+
+    // The menu is positioned once, against the pointer, so scrolling would
+    // leave it hanging over whatever arrived in its place.
+    //
+    // This listens for the wheel rather than for scroll events, because a
+    // scroll event says nothing about who caused it: opening a menu on a commit
+    // re-renders the list and restores its scroll position, which fires one.
+    // Watching for scroll closed the menu on the way up from opening it.
+    window.addEventListener(
+      'wheel',
+      function () {
+        if (openMenu) {
+          hideMenu(openMenu);
+        }
+      },
+      { capture: true, passive: true }
+    );
   }
 
   const api = {

@@ -207,6 +207,10 @@ pane has Revert and Reset; ours does not, so ours has no such buttons.
 - **Webview script order matters.** `format.js` before `dom.js`, both before the
   renderers. The lists live in `repositoryWindow.ts`, `changesView.ts`, and both
   `dev/preview*.html`.
+- **A `scroll` event says nothing about who caused it.** Restoring a scroll
+  position after a re-render fires one, so anything dismissed by scrolling must
+  listen for `wheel` instead. The context menu closed itself on the way up from
+  being opened until it did.
 - **`.commit-row` means different things** in `repo.css` and `main.css`. It is
   deliberately not in `shell.css`.
 
