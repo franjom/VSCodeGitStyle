@@ -82,6 +82,13 @@
     });
   }
 
+  const now =
+    typeof performance === 'object' && performance.now
+      ? function () {
+          return performance.now();
+        }
+      : Date.now;
+
   function post(message) {
     vscode.postMessage(message);
   }
@@ -1676,11 +1683,30 @@
           message.hash === state.details.hash &&
           message.path === state.detailsFile
         ) {
-          state.fileDiffLoading = false;
-          state.fileDiff = message.diff || null;
-          state.fileDiffError = message.error || null;
-          prepareFileDiff();
-          renderDetailsOnly();
+          {
+            const started = now();
+            state.fileDiffLoading = false;
+            state.fileDiff = message.diff || null;
+            state.fileDiffError = message.error || null;
+            prepareFileDiff();
+            const prepared = now();
+            renderDetailsOnly();
+            // Closes the record the extension host opened when it sent this.
+            // Without the acknowledgement it cannot tell a slow draw from one
+            // that never happened.
+            post({
+              type: 'diag',
+              label: 'fileDiff.render',
+              detail: {
+                prepareMs: Math.round(prepared - started),
+                drawMs: Math.round(now() - prepared),
+                rows: state.fileDiff ? state.fileDiff.rows.length : 0,
+                nodes: root.querySelectorAll('.diff-row').length,
+              },
+            });
+          }
+        } else {
+          post({ type: 'diag', label: 'fileDiff.stale', detail: { path: message.path } });
         }
         break;
       case 'busy':
@@ -1695,6 +1721,32 @@
         }
         break;
     }
+  });
+
+  /**
+   * Anything the webview throws would otherwise be invisible: it goes to a
+   * devtools console nobody has open. Sent across so it lands in the log beside
+   * what the extension host was doing at the time.
+   */
+  window.addEventListener('error', function (event) {
+    post({
+      type: 'diag',
+      label: 'uncaught',
+      failed: true,
+      detail: {
+        message: String(event.message),
+        source: String(event.filename || '') + ':' + String(event.lineno || 0),
+      },
+    });
+  });
+
+  window.addEventListener('unhandledrejection', function (event) {
+    post({
+      type: 'diag',
+      label: 'unhandledRejection',
+      failed: true,
+      detail: { message: String((event.reason && event.reason.message) || event.reason) },
+    });
   });
 
   render();

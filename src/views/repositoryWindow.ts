@@ -2,6 +2,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { readFileDiff } from '../git/diff';
 import { Git } from '../git/git';
+import { Diagnostics } from '../diagnostics';
 import { GitApi } from '../gitExtension';
 import { BLOB_SCHEME, COMMIT_SCHEME } from './contentProviders';
 import {
@@ -50,7 +51,8 @@ type Inbound =
       origPath?: string;
       status: string;
     }
-  | { type: 'fileDiff'; hash: string; path: string; origPath?: string };
+  | { type: 'fileDiff'; hash: string; path: string; origPath?: string }
+  | { type: 'diag'; label: string; detail?: Record<string, unknown>; failed?: boolean };
 
 /**
  * The Git Repository window: Visual Studio's full-screen commit graph, as a
@@ -64,7 +66,13 @@ export class RepositoryWindow {
    * History" does. Passing it to an already-open window re-scopes that one
    * rather than opening a second.
    */
-  static show(extensionUri: vscode.Uri, gitApi: GitApi, git: Git, file?: string): void {
+  static show(
+    extensionUri: vscode.Uri,
+    gitApi: GitApi,
+    git: Git,
+    file?: string,
+    diagnostics?: Diagnostics
+  ): void {
     if (RepositoryWindow.current) {
       RepositoryWindow.current.panel.reveal();
       if (file) {
@@ -77,7 +85,7 @@ export class RepositoryWindow {
       void vscode.window.showWarningMessage('No Git repository is open.');
       return;
     }
-    RepositoryWindow.current = new RepositoryWindow(extensionUri, gitApi, git, root, file);
+    RepositoryWindow.current = new RepositoryWindow(extensionUri, gitApi, git, root, file, diagnostics);
   }
 
   /** Re-scopes an open window to one file's history. */
@@ -100,7 +108,8 @@ export class RepositoryWindow {
     gitApi: GitApi,
     private readonly git: Git,
     private readonly root: string,
-    file?: string
+    file?: string,
+    private readonly diagnostics?: Diagnostics
   ) {
     this.file = file;
     this.panel = vscode.window.createWebviewPanel(
@@ -236,6 +245,10 @@ export class RepositoryWindow {
         case 'fileDiff':
           await this.sendFileDiff(message);
           return;
+
+        case 'diag':
+          this.recordFromWebview(message);
+          return;
       }
     } catch (err) {
       void vscode.window.showErrorMessage(
@@ -293,6 +306,13 @@ export class RepositoryWindow {
   private async sendFileDiff(
     message: Extract<Inbound, { type: 'fileDiff' }>
   ): Promise<void> {
+    // Reading the diff and drawing it are the two places this has hung, so both
+    // ends of each are recorded: a log ending in an unmatched "read" blames the
+    // extension host, one ending in an unmatched "post" blames the webview.
+    const read = this.diagnostics?.begin('fileDiff.read', {
+      path: message.path,
+      hash: message.hash.slice(0, 7),
+    });
     try {
       const diff = await readFileDiff(
         this.git,
@@ -301,8 +321,24 @@ export class RepositoryWindow {
         message.path,
         message.origPath
       );
+      const spans = diff.rows.reduce(
+        (total, row) => total + (row.oldSpans?.length ?? 0) + (row.newSpans?.length ?? 0),
+        0
+      );
+      read?.({ rows: diff.rows.length, changes: diff.changes, spans, truncated: diff.truncated });
+
+      // Left open deliberately: the webview closes it when it has drawn the
+      // diff. A log ending here means the payload went out and nothing came
+      // back, which is the renderer wedged rather than us.
+      this.pendingRender?.({ abandoned: true });
+      this.pendingRender = this.diagnostics?.begin('fileDiff.render', {
+        path: message.path,
+        rows: diff.rows.length,
+      });
       this.post({ type: 'fileDiff', hash: message.hash, path: message.path, diff });
     } catch (err) {
+      read?.({ failed: true });
+      this.diagnostics?.error('fileDiff.read', err, { path: message.path });
       this.post({
         type: 'fileDiff',
         hash: message.hash,
@@ -311,6 +347,26 @@ export class RepositoryWindow {
         error: err instanceof Error ? err.message : String(err),
       });
     }
+  }
+
+  /** Closed by the webview's acknowledgement; see sendFileDiff. */
+  private pendingRender: ((extra?: Record<string, unknown>) => void) | undefined;
+
+  /**
+   * What the webview reports about its own work. It is the only way to see the
+   * renderer's side of a hang: nothing else in this process can observe it.
+   */
+  private recordFromWebview(message: Extract<Inbound, { type: 'diag' }>): void {
+    if (message.label === 'fileDiff.render') {
+      this.pendingRender?.(message.detail);
+      this.pendingRender = undefined;
+      return;
+    }
+    if (message.failed) {
+      this.diagnostics?.error('webview.' + message.label, message.detail?.message ?? 'unknown', message.detail);
+      return;
+    }
+    this.diagnostics?.note('webview.' + message.label, message.detail);
   }
 
   private blobUri(rev: string, filePath: string): vscode.Uri {

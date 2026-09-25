@@ -209,3 +209,30 @@ pane has Revert and Reset; ours does not, so ours has no such buttons.
   `dev/preview*.html`.
 - **`.commit-row` means different things** in `repo.css` and `main.css`. It is
   deliberately not in `shell.css`.
+
+---
+
+## When it hangs
+
+`VS Git Style: Open Diagnostics Log` (command palette). It is a JSONL file in
+the extension's global storage, appended synchronously so it survives the
+window being killed — which an OutputChannel does not.
+
+Read it from the bottom. Every risky operation writes a `begin` before it
+starts and an `end` when it finishes, so **a trailing unmatched `begin` names
+what never came back**, and which side it was on:
+
+- `fileDiff.read` unmatched → the extension host, in git or the parser.
+- `fileDiff.render` unmatched → the renderer. That record is closed by the
+  webview's own acknowledgement, so its absence means the payload went out and
+  nothing came back.
+
+The `end` lines carry rows, spans and milliseconds, so a run that merely
+crawled is as legible as one that stopped.
+
+`parseLog` and `unfinished` in `src/diagnostics.ts` do the reading.
+
+VS Code's own evidence is thinner than it looks: its unresponsive-extension-host
+profiler names a culprit extension, but only fires when the *host* wedges — a
+stuck renderer leaves nothing — and `%APPDATA%/Code/logs` keeps about a dozen
+sessions, which is a few days. Do not count on it being there.

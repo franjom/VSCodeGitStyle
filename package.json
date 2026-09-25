@@ -54,6 +54,11 @@
         "command": "vsGitStyle.openRepositoryWindow",
         "title": "Open Git Repository Window",
         "category": "VS Git Style"
+      },
+      {
+        "command": "vsGitStyle.openDiagnostics",
+        "title": "Open Diagnostics Log",
+        "category": "VS Git Style"
       }
     ],
     "menus": {

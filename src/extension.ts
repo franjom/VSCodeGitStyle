@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { ChangesViewProvider } from './views/changesView';
 import { Git } from './git/git';
+import { createDiagnostics, registerDiagnosticsCommand } from './diagnosticsFile';
 import { activateGitApi } from './gitExtension';
 import {
   BlobContentProvider,
@@ -19,10 +20,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     return;
   }
 
+  const diagnostics = createDiagnostics(context);
   const git = new Git(api.git.path);
   const provider = new ChangesViewProvider(context.extensionUri, api, git);
 
   context.subscriptions.push(
+    registerDiagnosticsCommand(context),
     provider,
     vscode.window.registerWebviewViewProvider(ChangesViewProvider.viewType, provider, {
       webviewOptions: { retainContextWhenHidden: true },
@@ -37,10 +40,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     ),
     vscode.commands.registerCommand('vsGitStyle.refresh', () => provider.scheduleRefresh(0)),
     vscode.commands.registerCommand('vsGitStyle.openRepositoryWindow', () =>
-      RepositoryWindow.show(context.extensionUri, api, git)
+      RepositoryWindow.show(context.extensionUri, api, git, undefined, diagnostics)
     ),
     vscode.commands.registerCommand('vsGitStyle.viewFileHistory', (file?: string) =>
-      RepositoryWindow.show(context.extensionUri, api, git, file)
+      RepositoryWindow.show(context.extensionUri, api, git, file, diagnostics)
     )
   );
 
