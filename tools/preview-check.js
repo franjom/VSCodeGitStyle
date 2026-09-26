@@ -623,6 +623,91 @@ function inspectMenuDismissal() {
     });
 }
 
+/**
+ * The eye on a branch row, which puts that branch into the history beside the
+ * scope, and the branch context menu the extension host describes.
+ */
+function inspectBranchRow() {
+  const rows = [...document.querySelectorAll('.tree-row.branch')];
+  const scopeRow = rows.find(function (row) {
+    return row.classList.contains('selected');
+  });
+  const other = rows.find(function (row) {
+    return !row.classList.contains('selected') && row.querySelector('.eye');
+  });
+
+  const result = {
+    branchRows: rows.length,
+    eyes: document.querySelectorAll('.tree-row .eye').length,
+    scopeEyeOn: !!(scopeRow && scopeRow.querySelector('.eye.on')),
+    scopeEyeLocked: !!(scopeRow && scopeRow.querySelector('.eye').disabled),
+    otherEyeOn: !!other.querySelector('.eye.on'),
+  };
+
+  other.querySelector('.eye').click();
+  return settle()
+    .then(settle)
+    .then(function () {
+      // The row is rebuilt by the render, so it has to be found again.
+      const label = other.querySelector('.label').textContent;
+      const again = [...document.querySelectorAll('.tree-row.branch')].find(function (row) {
+        return row.querySelector('.label').textContent === label;
+      });
+      result.toggledOn = !!again.querySelector('.eye.on');
+      result.extras = (window.__VSG_REPO_MODEL.graph.extras || []).length;
+
+      again.dispatchEvent(
+        new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 200, clientY: 200 })
+      );
+      return settle();
+    })
+    .then(function () {
+      const menu = document.getElementById('menu');
+      const items = [...menu.querySelectorAll('.item')];
+      const disabled = items.filter(function (item) {
+        return item.classList.contains('disabled');
+      });
+      result.menuItems = items.length;
+      result.menuSeparators = menu.querySelectorAll('.separator').length;
+      // The column is always present so labels line up; an entry without an
+      // icon gets an empty one.
+      result.menuIcons = menu.querySelectorAll('.menu-icon').length;
+      result.menuFilledIcons = menu.querySelectorAll('.menu-icon.codicon').length;
+      result.menuHasHistory = items.some(function (item) {
+        return item.textContent.indexOf('View History') !== -1;
+      });
+
+      // A disabled entry must neither act nor close the menu.
+      const currentRow = [...document.querySelectorAll('.tree-row.branch.current')][0];
+      result.disabledOnOther = disabled.length;
+      if (currentRow) {
+        document.getElementById('menu').hidden = true;
+        currentRow.dispatchEvent(
+          new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 200, clientY: 200 })
+        );
+      }
+      return settle();
+    })
+    .then(function () {
+      const menu = document.getElementById('menu');
+      const disabled = menu.querySelector('.item.disabled');
+      result.currentHasDisabled = !!disabled;
+      result.disabledSaysWhy = disabled ? disabled.textContent.indexOf('Already checked out') !== -1 : false;
+      if (disabled) {
+        disabled.click();
+      }
+      return settle();
+    })
+    .then(function () {
+      result.stillOpenAfterDisabledClick = !document.getElementById('menu').hidden;
+      document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      return settle();
+    })
+    .then(function () {
+      return result;
+    });
+}
+
 /** Selects the first changed file, so the screenshot shows a representative diff. */
 function selectFirstFile() {
   const first = document.querySelector('.changes .tree-row.change-file');
@@ -1076,6 +1161,44 @@ async function main() {
     );
     check('losing focus closes it', menu.blur, String(menu.blur));
     check('and choosing an item still closes it', menu.choosing, String(menu.choosing));
+
+    const branch = await evaluate(cdp, inspectBranchRow);
+    check(
+      'every branch row carries an eye',
+      branch.eyes === branch.branchRows && branch.eyes > 0,
+      branch.eyes + ' eyes on ' + branch.branchRows + ' branch rows'
+    );
+    check(
+      "the scope's own eye is on and cannot be turned off",
+      branch.scopeEyeOn && branch.scopeEyeLocked,
+      'on=' + branch.scopeEyeOn + ' locked=' + branch.scopeEyeLocked
+    );
+    check(
+      'clicking another eye brings that branch into the history',
+      !branch.otherEyeOn && branch.toggledOn && branch.extras === 1,
+      'was off, now on, ' + branch.extras + ' extra branch(es) shown'
+    );
+    check(
+      'a branch right-click opens the menu the extension host described',
+      branch.menuItems >= 7 && branch.menuSeparators >= 2 && branch.menuHasHistory,
+      branch.menuItems + ' items, ' + branch.menuSeparators + ' separators'
+    );
+    check(
+      'every menu entry keeps the icon column, so labels line up',
+      branch.menuIcons === branch.menuItems && branch.menuFilledIcons > 0,
+      branch.menuIcons + ' columns for ' + branch.menuItems + ' items, ' +
+        branch.menuFilledIcons + ' with an icon'
+    );
+    check(
+      'an entry that cannot apply is shown disabled, with the reason',
+      branch.currentHasDisabled && branch.disabledSaysWhy,
+      'disabled=' + branch.currentHasDisabled + ' explains=' + branch.disabledSaysWhy
+    );
+    check(
+      'and clicking it does nothing, rather than looking like it did',
+      branch.stillOpenAfterDisabledClick,
+      String(branch.stillOpenAfterDisabledClick)
+    );
 
     const cleared = await evaluate(cdp, applyFilter, '');
     check(

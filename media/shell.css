@@ -138,3 +138,14 @@
     opacity: 1;
   }
 }
+
+/* A menu entry that cannot apply right now. Shown rather than omitted so the
+   menu keeps its shape, with the reason appended to its label. */
+.context-menu .item.disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.context-menu .item.disabled:hover {
+  background: transparent;
+}

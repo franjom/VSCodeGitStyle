@@ -56,7 +56,14 @@ export interface GraphModel {
   outgoing: number;
   /** True when more commits exist beyond the requested page. */
   hasMore: boolean;
+  /** The branch the Incoming and Local History counts are measured against. */
   scope: string;
+  /**
+   * Branches shown alongside it, from the eye toggle in the tree. Visual
+   * Studio's Git Repository window draws several at once and names them all in
+   * the breadcrumb; only `scope` decides what counts as incoming or outgoing.
+   */
+  extras: string[];
   upstream?: string;
   /** Set when the history is scoped to one file, for the breadcrumb. */
   file?: string;
@@ -366,7 +373,8 @@ export async function readGraph(
   root: string,
   scope: string,
   limit: number,
-  file?: string
+  file?: string,
+  extras: string[] = []
 ): Promise<GraphModel> {
   const upstream = await upstreamOf(git, root, scope);
 
@@ -389,7 +397,14 @@ export async function readGraph(
   const requested = limit + incomingBudget;
 
   // Ask for one extra commit so we can tell whether a "Load more" row is needed.
-  const revs = upstream && !file ? [scope, upstream] : [scope];
+  // Every branch the window is showing goes into the one log, so the lanes are
+  // laid out across all of them together rather than stitched from separate
+  // reads. The scope leads: a commit it shares with an extra still belongs to
+  // the branch whose incoming and outgoing counts are on screen.
+  // A branch listed twice, or the same as the scope, would put its commits in
+  // the log twice over and give git a redundant revision to walk.
+  const shown = [...new Set([scope, ...extras.filter(Boolean)])];
+  const revs = upstream && !file ? [...shown, upstream] : shown;
   const out = await git.exec(root, [
     'log',
     '--date-order',
@@ -418,6 +433,7 @@ export async function readGraph(
     outgoing: outgoingSet.size,
     hasMore,
     scope,
+    extras: shown.slice(1),
     upstream,
     file,
   };

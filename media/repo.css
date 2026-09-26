@@ -979,3 +979,35 @@ body.vscode-high-contrast-light {
 .st-T {
   color: var(--vsg-lane-2);
 }
+
+/* ------------------------------------------------------------ eye toggle */
+
+/* Puts a branch into the history beside the scope. Kept out of the way until
+   the row is hovered, unless the branch is already being shown - a row that
+   is contributing to the graph has to say so without being pointed at. */
+.tree-row .eye {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 18px;
+  margin-left: auto;
+  opacity: 0;
+}
+
+.tree-row:hover .eye,
+.tree-row .eye.on {
+  opacity: 1;
+}
+
+.tree-row .eye.on .codicon {
+  color: var(--vscode-charts-blue, #4fa3e3);
+}
+
+.tree-row .eye:disabled {
+  /* The scope's own eye: on, and not for turning off. */
+  opacity: 1;
+  cursor: default;
+}
+
+.tree-row .eye .codicon {
+  font-size: 14px;
+}

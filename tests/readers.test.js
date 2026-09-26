@@ -417,3 +417,75 @@ test('a repository with no origin does not claim a provider', async (t) => {
   assert.equal(info.host, undefined);
   assert.equal(info.provider, 'unknown');
 });
+
+// --------------------------------------------- several branches in one graph
+
+/** A repository with two branches that diverged after a shared base. */
+function repoWithTwoBranches() {
+  const repo = new TestRepo();
+  repo.write('base.txt', 'base\n');
+  repo.commit('Base');
+
+  repo.git(['checkout', '-q', '-b', 'feature/one']);
+  repo.write('one.txt', 'one\n');
+  repo.commit('Only on feature/one');
+
+  repo.git(['checkout', '-q', 'main']);
+  repo.write('main.txt', 'main\n');
+  repo.commit('Only on main');
+  return repo;
+}
+
+test('a graph of one branch does not show another branch commits', async (t) => {
+  const repo = repoWithTwoBranches();
+  t.after(() => repo.dispose());
+
+  const graph = await readGraph(git, repo.dir, 'main', 50);
+  const subjects = graph.rows.map((r) => r.commit.subject);
+  assert.ok(subjects.includes('Only on main'));
+  assert.ok(!subjects.includes('Only on feature/one'), 'the other branch is not in scope');
+  assert.deepEqual(graph.extras, []);
+});
+
+test('toggling a branch in brings its commits into the same graph', async (t) => {
+  const repo = repoWithTwoBranches();
+  t.after(() => repo.dispose());
+
+  const graph = await readGraph(git, repo.dir, 'main', 50, undefined, ['feature/one']);
+  const subjects = graph.rows.map((r) => r.commit.subject);
+
+  assert.ok(subjects.includes('Only on main'), 'the scope is still there');
+  assert.ok(subjects.includes('Only on feature/one'), 'and so is the branch toggled in');
+  assert.deepEqual(graph.extras, ['feature/one']);
+  assert.ok(graph.maxLanes >= 2, 'they are drawn as separate lanes');
+});
+
+test('the shared base is one commit, not one per branch', async (t) => {
+  const repo = repoWithTwoBranches();
+  t.after(() => repo.dispose());
+
+  const graph = await readGraph(git, repo.dir, 'main', 50, undefined, ['feature/one']);
+  const bases = graph.rows.filter((r) => r.commit.subject === 'Base');
+  assert.equal(bases.length, 1);
+});
+
+test('the scope is what incoming and outgoing are still measured against', async (t) => {
+  const repo = repoWithTwoBranches();
+  t.after(() => repo.dispose());
+
+  const graph = await readGraph(git, repo.dir, 'main', 50, undefined, ['feature/one']);
+  assert.equal(graph.scope, 'main', 'toggling a branch in does not change the scope');
+});
+
+test('a branch toggled in twice, or equal to the scope, is counted once', async (t) => {
+  const repo = repoWithTwoBranches();
+  t.after(() => repo.dispose());
+
+  const graph = await readGraph(git, repo.dir, 'main', 50, undefined, [
+    'feature/one',
+    'feature/one',
+    'main',
+    '',
+  ]);
+  assert.deepEqual(graph.extras, ['feature/one'], 'duplicates, the scope and blanks are dropped');
+});

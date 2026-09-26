@@ -97,6 +97,8 @@ A `WebviewPanel` in the editor area.
 | Click a file in the pane | done, shows its diff in the pane; double-click opens a real editor diff at that commit via the `vsgitstyle-blob:` scheme |
 | Double-click a commit | done, opens the whole commit as a read-only patch |
 | Context menu: details, copy ID, new branch here | done |
+| Eye toggle on a branch row | done: puts that branch into the history beside the scope, several at once, the way Visual Studio draws them; the scope's own eye is on and locked |
+| Branch context menu | done ([src/git/branchOps.ts](src/git/branchOps.ts)): checkout, detached checkout, new branch from, merge, rebase, the three resets, cherry-pick, rename, delete, view history, compare, toggle in history, fetch/pull/push/sync and new worktree. Entries that cannot apply are shown disabled with the reason; anything that can cost work confirms first, and what git cannot undo says so |
 | Paging | `Load more commits`, page size from `vsGitStyle.graphPageSize` (default 200); incoming commits get their own budget so a large fetch does not truncate Local History |
 | Row virtualization | done; only the rows on screen are in the DOM, so an 8,000-commit history costs what 200 does |
 | Stays current | reloads when the repository changes anywhere - the sidebar, a terminal, another editor - not only on its own actions |

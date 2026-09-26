@@ -3,11 +3,20 @@ import * as vscode from 'vscode';
 import { readFileDiff } from '../git/diff';
 import { Git } from '../git/git';
 import { Diagnostics } from '../diagnostics';
+import {
+  BranchOp,
+  branchArgs,
+  branchMenu,
+  confirmation,
+  MenuEntry,
+  OpContext,
+} from '../git/branchOps';
 import { GitApi } from '../gitExtension';
 import { BLOB_SCHEME, COMMIT_SCHEME } from './contentProviders';
 import {
   GraphModel,
   readCommitDetails,
+  parseNameStatus,
   readGraph,
   readRefs,
   readReviewInfo,
@@ -30,6 +39,15 @@ interface WindowModel {
   refs: RefEntry[];
   graph: GraphModel;
   review: ReviewInfo;
+  /**
+   * Each branch's context menu, keyed by its short name.
+   *
+   * Built here rather than in the webview so there is one description of what
+   * the menu offers, tested in branchOps.ts. Sending it with the model rather
+   * than fetching it on right-click is what keeps the menu instant; it costs a
+   * few tens of kilobytes beside a graph already far larger.
+   */
+  menus: Record<string, MenuEntry[]>;
 }
 
 type Inbound =
@@ -52,7 +70,8 @@ type Inbound =
       status: string;
     }
   | { type: 'fileDiff'; hash: string; path: string; origPath?: string }
-  | { type: 'diag'; label: string; detail?: Record<string, unknown>; failed?: boolean };
+  | { type: 'diag'; label: string; detail?: Record<string, unknown>; failed?: boolean }
+  | { type: 'branchOp'; op: BranchOp; ref: string };
 
 /**
  * The Git Repository window: Visual Studio's full-screen commit graph, as a
@@ -98,6 +117,8 @@ export class RepositoryWindow {
   private readonly panel: vscode.WebviewPanel;
   private readonly disposables: vscode.Disposable[] = [];
   private scope: string | undefined;
+  /** Branches drawn alongside the scope, from the eye toggle in the tree. */
+  private extras: string[] = [];
   /** Repo-relative path when the window is showing one file's history. */
   private file: string | undefined;
   private limit = pageSize();
@@ -249,6 +270,10 @@ export class RepositoryWindow {
         case 'diag':
           this.recordFromWebview(message);
           return;
+
+        case 'branchOp':
+          await this.branchOp(message);
+          return;
       }
     } catch (err) {
       void vscode.window.showErrorMessage(
@@ -264,7 +289,15 @@ export class RepositoryWindow {
     if (!this.scope || !refs.some((r) => r.short === this.scope)) {
       this.scope = refs.find((r) => r.current)?.short ?? 'HEAD';
     }
-    const graph = await readGraph(this.git, this.root, this.scope, this.limit, this.file);
+    this.extras = this.extras.filter((ref) => refs.some((entry) => entry.short === ref));
+    const graph = await readGraph(
+      this.git,
+      this.root,
+      this.scope,
+      this.limit,
+      this.file,
+      this.extras
+    );
     const configured = vscode.workspace
       .getConfiguration('vsGitStyle')
       .get<ReviewProvider | 'auto'>('reviewProvider', 'auto');
@@ -274,6 +307,9 @@ export class RepositoryWindow {
       repoName: path.basename(this.root),
       root: this.root,
       refs,
+      menus: Object.fromEntries(
+        refs.map((ref) => [ref.short, branchMenu(ref, refs.find((r) => r.current)?.short)])
+      ),
       graph,
       review,
     };
@@ -367,6 +403,255 @@ export class RepositoryWindow {
       return;
     }
     this.diagnostics?.note('webview.' + message.label, message.detail);
+  }
+
+  /**
+   * Runs a branch context-menu action.
+   *
+   * Everything that could cost work asks first, with a wording that names both
+   * branches so the direction cannot be misread; what is its own undo goes
+   * straight through. The decision of which is which lives in branchOps.ts,
+   * where it is tested - this only prompts and runs.
+   */
+  private async branchOp(message: Extract<Inbound, { type: 'branchOp' }>): Promise<void> {
+    const refs = await readRefs(this.git, this.root);
+    const target = refs.find((ref) => ref.short === message.ref);
+    if (!target) {
+      void vscode.window.showWarningMessage(`'${message.ref}' is no longer there.`);
+      await this.load();
+      return;
+    }
+    const current = refs.find((ref) => ref.current)?.short;
+    const context: OpContext = { target, current };
+
+    // The two that are the window's own business.
+    if (message.op === 'viewHistory') {
+      this.scope = target.short;
+      this.file = undefined;
+      this.limit = pageSize();
+      await this.load();
+      return;
+    }
+    if (message.op === 'toggleInHistory') {
+      this.toggleExtra(target.short);
+      await this.load();
+      return;
+    }
+    if (message.op === 'compare') {
+      await this.compareBranches(target.short, current);
+      return;
+    }
+    if (message.op === 'sync') {
+      await vscode.commands.executeCommand('git.sync', vscode.Uri.file(this.root));
+      await this.load();
+      return;
+    }
+
+    // The ones that need something typed before there is a command at all.
+    if (message.op === 'createBranch' || message.op === 'rename') {
+      const name = await this.askBranchName(message.op, target.short);
+      if (!name) {
+        return;
+      }
+      context.name = name;
+    }
+    if (message.op === 'newWorktree') {
+      const path = await this.askWorktreePath(target.short);
+      if (!path) {
+        return;
+      }
+      context.path = path;
+    }
+
+    const ask = confirmation(message.op, context);
+    if (ask) {
+      const chosen = await vscode.window.showWarningMessage(
+        ask.message,
+        { modal: true, detail: ask.detail },
+        ask.confirm
+      );
+      if (chosen !== ask.confirm) {
+        return;
+      }
+    }
+
+    const args = branchArgs(message.op, context);
+    if (!args) {
+      return;
+    }
+
+    const done = this.diagnostics?.begin('branchOp', { op: message.op, ref: target.short });
+    try {
+      await this.git.exec(this.root, args);
+      done?.();
+      await this.afterBranchOp(message.op, context);
+    } catch (err) {
+      done?.({ failed: true });
+      await this.handleBranchOpFailure(message.op, context, err);
+    }
+    await this.load();
+  }
+
+  /**
+   * What a successful operation leaves the window looking at.
+   *
+   * Checking out or renaming moves the branch the history is about, and a
+   * window still showing the old name would be quietly wrong.
+   */
+  private async afterBranchOp(op: BranchOp, context: OpContext): Promise<void> {
+    if (op === 'checkout') {
+      this.scope = context.target.kind === 'remote'
+        ? context.target.short.slice(context.target.short.indexOf('/') + 1)
+        : context.target.short;
+    }
+    if (op === 'rename' && context.name) {
+      if (this.scope === context.target.short) {
+        this.scope = context.name;
+      }
+      this.extras = this.extras.map((ref) => (ref === context.target.short ? context.name! : ref));
+    }
+    if (op === 'delete' || op === 'deleteForce') {
+      this.extras = this.extras.filter((ref) => ref !== context.target.short);
+    }
+    if (op === 'newWorktree' && context.path) {
+      const open = await vscode.window.showInformationMessage(
+        `Worktree for '${context.target.short}' created.`,
+        'Open in New Window'
+      );
+      if (open) {
+        await vscode.commands.executeCommand(
+          'vscode.openFolder',
+          vscode.Uri.file(context.path),
+          { forceNewWindow: true }
+        );
+      }
+    }
+  }
+
+  /**
+   * A failed delete is the one worth a second question: git refuses to drop a
+   * branch holding work that is nowhere else, and forcing it is a different
+   * decision rather than a retry.
+   */
+  private async handleBranchOpFailure(
+    op: BranchOp,
+    context: OpContext,
+    err: unknown
+  ): Promise<void> {
+    const message = err instanceof Error ? err.message : String(err);
+    if (op === 'delete' && context.target.kind !== 'remote' && /not fully merged/i.test(message)) {
+      const ask = confirmation('deleteForce', context)!;
+      const chosen = await vscode.window.showWarningMessage(
+        ask.message,
+        { modal: true, detail: ask.detail },
+        ask.confirm
+      );
+      if (chosen === ask.confirm) {
+        await this.git.exec(this.root, branchArgs('deleteForce', context)!);
+      }
+      return;
+    }
+    this.diagnostics?.error('branchOp', err, { op, ref: context.target.short });
+    void vscode.window.showErrorMessage(message);
+  }
+
+  private async askBranchName(op: BranchOp, ref: string): Promise<string | undefined> {
+    const creating = op === 'createBranch';
+    const name = await vscode.window.showInputBox({
+      title: creating ? `New branch from '${ref}'` : `Rename '${ref}'`,
+      prompt: creating ? 'Name for the new branch' : 'New name for the branch',
+      value: creating ? '' : ref,
+      // git's own rules, checked here so the error arrives while it can still
+      // be corrected rather than as a failed command afterwards.
+      validateInput: (value) => {
+        const trimmed = value.trim();
+        if (!trimmed) {
+          return 'Enter a branch name.';
+        }
+        if (/[\s~^:?*[\\]/.test(trimmed) || trimmed.includes('..') || trimmed.endsWith('.lock')) {
+          return 'A branch name cannot contain spaces, "..", or any of ~ ^ : ? * [ \\';
+        }
+        if (trimmed.startsWith('-') || trimmed.startsWith('/') || trimmed.endsWith('/')) {
+          return 'A branch name cannot start with "-" or "/", or end with "/".';
+        }
+        return undefined;
+      },
+    });
+    return name?.trim() || undefined;
+  }
+
+  private async askWorktreePath(ref: string): Promise<string | undefined> {
+    const parent = await vscode.window.showOpenDialog({
+      title: `Where should the worktree for '${ref}' go?`,
+      canSelectFolders: true,
+      canSelectFiles: false,
+      openLabel: 'Create Worktree Here',
+    });
+    if (!parent?.length) {
+      return undefined;
+    }
+    // A worktree needs its own directory, and git will not use one that exists.
+    return path.join(parent[0]!.fsPath, ref.replace(/[\\/]/g, '-'));
+  }
+
+  /**
+   * The changed files between two branches, opened as ordinary editor diffs.
+   *
+   * Two dots rather than three: Visual Studio's comparison is what the two
+   * branches look like side by side now, not what one has done since they last
+   * agreed.
+   */
+  private async compareBranches(ref: string, current?: string): Promise<void> {
+    if (!current) {
+      return;
+    }
+    const done = this.diagnostics?.begin('compare', { ref, current });
+    const out = await this.git.exec(this.root, [
+      'diff',
+      '--name-status',
+      '-z',
+      '-M',
+      `${current}..${ref}`,
+    ]);
+    const files = parseNameStatus(out);
+    done?.({ files: files.length });
+
+    if (!files.length) {
+      void vscode.window.showInformationMessage(
+        `'${ref}' and '${current}' have the same content.`
+      );
+      return;
+    }
+
+    const picked = await vscode.window.showQuickPick(
+      files.map((file) => ({
+        label: file.path.split('/').pop() ?? file.path,
+        description: file.status,
+        detail: file.path,
+        file,
+      })),
+      {
+        title: `${files.length} file(s) differ between '${current}' and '${ref}'`,
+        placeHolder: 'Pick a file to see the difference',
+        matchOnDetail: true,
+      }
+    );
+    if (!picked) {
+      return;
+    }
+    await vscode.commands.executeCommand(
+      'vscode.diff',
+      this.blobUri(current, picked.file.origPath ?? picked.file.path),
+      this.blobUri(ref, picked.file.path),
+      `${picked.label} (${current} ↔ ${ref})`
+    );
+  }
+
+  /** Adds or removes a branch from the set the graph is drawing. */
+  private toggleExtra(ref: string): void {
+    this.extras = this.extras.includes(ref)
+      ? this.extras.filter((other) => other !== ref)
+      : [...this.extras, ref];
   }
 
   private blobUri(rev: string, filePath: string): vscode.Uri {

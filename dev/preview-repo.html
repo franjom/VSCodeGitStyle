@@ -84,6 +84,37 @@
   })();
 </script>
 <script>
+  /*
+   * A menu spec of the shape src/git/branchOps.ts produces. What the real menu
+   * offers is settled by tests/branchOps.test.js; what the harness checks here
+   * is that a spec of this shape renders - entries, separators, and a disabled
+   * entry that says why and does nothing.
+   */
+  function menusFor(refs) {
+    const menus = {};
+    for (const ref of refs) {
+      menus[ref.short] = [
+        { op: 'checkout', label: 'Checkout', icon: 'check',
+          disabled: !!ref.current, why: ref.current ? 'Already checked out' : undefined,
+          breakAfter: true },
+        { op: 'createBranch', label: 'New Local Branch From…', icon: 'git-branch' },
+        { op: 'merge', label: "Merge '" + ref.short + "' into 'Test_alpha'", icon: 'git-merge',
+          disabled: !!ref.current, why: ref.current ? 'A branch cannot be merged into itself' : undefined },
+        { op: 'resetHard', label: 'Reset — Discard Changes (--hard)', breakAfter: true },
+        { op: 'viewHistory', label: 'View History', icon: 'history' },
+        { op: 'toggleInHistory', label: 'Toggle Branch in History', icon: 'eye' },
+        { op: 'newWorktree', label: 'New Worktree From…', icon: 'new-folder' }
+      ];
+    }
+    return menus;
+  }
+
+  (function prepareModel() {
+    const model = window.__VSG_REPO_MODEL;
+    model.graph.extras = model.graph.extras || [];
+    model.menus = menusFor(model.refs);
+  })();
+
   let stored = {};
   window.acquireVsCodeApi = function () {
     return {
@@ -138,6 +169,14 @@
               isMerge: c.parents.length > 1
             } : null
           } }));
+        }
+        if (message.type === 'branchOp' && message.op === 'toggleInHistory') {
+          var graph = window.__VSG_REPO_MODEL.graph;
+          var at = graph.extras.indexOf(message.ref);
+          if (at === -1) { graph.extras.push(message.ref); } else { graph.extras.splice(at, 1); }
+          window.dispatchEvent(new MessageEvent('message', {
+            data: { type: 'model', model: window.__VSG_REPO_MODEL }
+          }));
         }
         if (message.type === 'fileDiff') {
           window.dispatchEvent(new MessageEvent('message', { data: {

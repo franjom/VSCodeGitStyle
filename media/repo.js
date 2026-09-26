@@ -428,6 +428,63 @@
     return node;
   }
 
+  /**
+   * The eye that puts a branch into the history beside the scope, and takes it
+   * out again. Visual Studio shows it on the row itself, so a branch can be
+   * brought into view without opening a menu.
+   *
+   * The scope is always drawn, so its eye is on and cannot be turned off - the
+   * way out of that is to make another branch the scope.
+   */
+  function eyeToggle(ref) {
+    const graph = state.model.graph;
+    const isScope = graph.scope === ref.short;
+    const shown = isScope || (graph.extras || []).indexOf(ref.short) !== -1;
+
+    const button = iconButton(
+      shown ? 'eye' : 'eye-closed',
+      isScope
+        ? 'Shown as the current history'
+        : shown
+          ? 'Hide ' + ref.short + ' from the history'
+          : 'Show ' + ref.short + ' in the history',
+      function () {
+        post({ type: 'branchOp', op: 'toggleInHistory', ref: ref.short });
+      },
+      isScope
+    );
+    button.classList.add('eye');
+    if (shown) {
+      button.classList.add('on');
+    }
+    return button;
+  }
+
+  /**
+   * The branch context menu, as the extension host described it. Nothing about
+   * which entries apply is decided here - see src/git/branchOps.ts.
+   */
+  function branchMenuItems(ref) {
+    const entries = (state.model.menus && state.model.menus[ref.short]) || [];
+    const items = [];
+    for (const entry of entries) {
+      items.push({
+        label: entry.disabled ? entry.label + '  —  ' + entry.why : entry.label,
+        icon: entry.icon,
+        run: entry.disabled
+          ? function () {}
+          : function () {
+              post({ type: 'branchOp', op: entry.op, ref: ref.short });
+            },
+        disabled: entry.disabled,
+      });
+      if (entry.breakAfter) {
+        items.push('-');
+      }
+    }
+    return items;
+  }
+
   function toggleTree(key) {
     if (state.treeClosed.has(key)) {
       state.treeClosed.delete(key);
@@ -483,18 +540,9 @@
         post({ type: 'setScope', scope: ref.short });
       });
       row.addEventListener('contextmenu', function (event) {
-        const items = [
-          { label: 'View History', run: function () { post({ type: 'setScope', scope: ref.short }); } },
-        ];
-        if (ref.kind !== 'remote' && !ref.current) {
-          items.push('-');
-          items.push({
-            label: 'Checkout ' + ref.short,
-            run: function () { post({ type: 'checkout', ref: ref.short }); },
-          });
-        }
-        showMenu(event, items);
+        showMenu(event, branchMenuItems(ref));
       });
+      row.appendChild(eyeToggle(ref));
       container.appendChild(row);
     }
   }

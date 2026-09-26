@@ -79,13 +79,22 @@
         menuEl.appendChild(el('div', 'separator'));
         continue;
       }
-      const row = el('div', 'item');
+      const row = el('div', 'item' + (item.disabled ? ' disabled' : ''));
       row.appendChild(item.icon ? icon(item.icon, 'menu-icon') : el('span', 'menu-icon'));
       row.appendChild(el('span', null, item.label));
-      row.addEventListener('click', function () {
-        hideMenu(menuEl);
-        item.run();
-      });
+      if (item.disabled) {
+        // Shown rather than left out, so the menu keeps its shape and the
+        // label can say why. It swallows the click: closing the menu on one
+        // would read as though something had happened.
+        row.addEventListener('click', function (event) {
+          event.stopPropagation();
+        });
+      } else {
+        row.addEventListener('click', function () {
+          hideMenu(menuEl);
+          item.run();
+        });
+      }
       menuEl.appendChild(row);
     }
 
