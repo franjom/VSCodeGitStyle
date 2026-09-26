@@ -149,3 +149,16 @@
 .context-menu .item.disabled:hover {
   background: transparent;
 }
+
+.context-menu .menu-label {
+  flex: 1 1 auto;
+}
+
+/* The shortcut sits at the right of the entry, far enough from the label that
+   the two never read as one string. */
+.context-menu .menu-shortcut {
+  flex: 0 0 auto;
+  margin-left: 24px;
+  font-size: 11px;
+  color: var(--vsg-muted);
+}

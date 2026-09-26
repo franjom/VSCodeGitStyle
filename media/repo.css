@@ -1011,3 +1011,55 @@ body.vscode-high-contrast-light {
 .tree-row .eye .codicon {
   font-size: 14px;
 }
+
+/* ------------------------------------------------------------ hover card */
+
+/* What Visual Studio shows when the pointer rests on a commit row. Placed by
+   the script, which keeps it on screen the way it does the context menu. */
+.hover-card {
+  position: fixed;
+  z-index: 90;
+  max-width: 620px;
+  padding: 8px 10px;
+  background: var(--vscode-editorHoverWidget-background, var(--vscode-menu-background, #1f1f1f));
+  color: var(--vscode-editorHoverWidget-foreground, var(--vscode-menu-foreground, #cccccc));
+  border: 1px solid var(--vscode-editorHoverWidget-border, var(--vsg-border));
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+  font-size: 12px;
+  /* It must never take the hover from the row that opened it. */
+  pointer-events: none;
+}
+
+.hover-card .fields {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 2px 14px;
+}
+
+.hover-card .k {
+  color: var(--vsg-muted);
+  white-space: nowrap;
+}
+
+.hover-card .v {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hover-card .v.mono,
+.hover-card .v.path {
+  font-family: var(--vscode-editor-font-family, monospace);
+}
+
+/* The message, below a rule, the way Visual Studio separates it. */
+.hover-card .hover-subject {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--vsg-border);
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

@@ -16,6 +16,11 @@ export interface RawCommit {
   subject: string;
   /** Decorations: "HEAD -> main", "origin/main", "tag: v1.2". */
   refs: string[];
+  authorEmail: string;
+  /** Who recorded it, which a rebase or a cherry-pick makes someone else. */
+  committer: string;
+  committerEmail: string;
+  committerDate: string;
 }
 
 /** A line that crosses the whole row, from lane `from` on top to `to` below. */
@@ -64,6 +69,8 @@ export interface GraphModel {
    * the breadcrumb; only `scope` decides what counts as incoming or outgoing.
    */
   extras: string[];
+  /** True when the graph is filtered to the commits not yet on both sides. */
+  outgoingOnly: boolean;
   upstream?: string;
   /** Set when the history is scoped to one file, for the breadcrumb. */
   file?: string;
@@ -83,6 +90,14 @@ export interface RefEntry {
 const UNIT = '\x1f';
 const RECORD = '\x1e';
 
+/**
+ * The fields every row carries.
+ *
+ * Author and committer are both read, and both e-mail addresses with them,
+ * because the hover card names all four the way Visual Studio's does - and a
+ * rebase, a cherry-pick or a patch applied by someone else is exactly when the
+ * difference between them matters. They cost one line of log output each.
+ */
 const LOG_FORMAT = [
   '%H',
   '%P',
@@ -90,6 +105,10 @@ const LOG_FORMAT = [
   '%aI',
   '%D',
   '%s',
+  '%ae',
+  '%cn',
+  '%ce',
+  '%cI',
 ].join(UNIT) + RECORD;
 
 export interface CommitFile {
@@ -374,7 +393,9 @@ export async function readGraph(
   scope: string,
   limit: number,
   file?: string,
-  extras: string[] = []
+  extras: string[] = [],
+  /** Visual Studio's "Show Outgoing / Incoming Only". */
+  outgoingOnly = false
 ): Promise<GraphModel> {
   const upstream = await upstreamOf(git, root, scope);
 
@@ -425,15 +446,25 @@ export async function readGraph(
     commits.length = requested;
   }
 
+  // Filtering before the layout rather than after it, so the lanes are drawn
+  // for what is on screen. The rows left behind are the ones already accounted
+  // for on both sides, which is what makes the filter worth having: what is
+  // left is the work in flight.
+  const shownCommits =
+    outgoingOnly && (incomingSet.size > 0 || outgoingSet.size > 0)
+      ? commits.filter((commit) => incomingSet.has(commit.hash) || outgoingSet.has(commit.hash))
+      : commits;
+
   const headHash = (await git.exec(root, ['rev-parse', 'HEAD'])).trim();
 
   return {
-    ...layout(commits, incomingSet, outgoingSet, headHash),
+    ...layout(shownCommits, incomingSet, outgoingSet, headHash),
     incoming: incomingSet.size,
     outgoing: outgoingSet.size,
     hasMore,
     scope,
     extras: shown.slice(1),
+    outgoingOnly,
     upstream,
     file,
   };
@@ -474,7 +505,8 @@ export function parseLog(out: string): RawCommit[] {
     if (!line.trim()) {
       continue;
     }
-    const [hash, parents, author, date, refs, subject] = line.split(UNIT);
+    const [hash, parents, author, date, refs, subject, authorEmail, committer, committerEmail, committerDate] =
+      line.split(UNIT);
     if (!hash) {
       continue;
     }
@@ -485,6 +517,10 @@ export function parseLog(out: string): RawCommit[] {
       author: author ?? '',
       date: date ?? '',
       subject: subject ?? '',
+      authorEmail: authorEmail ?? '',
+      committer: committer ?? '',
+      committerEmail: committerEmail ?? '',
+      committerDate: committerDate ?? '',
       refs: (refs ?? '')
         .split(', ')
         .map((r) => r.trim())

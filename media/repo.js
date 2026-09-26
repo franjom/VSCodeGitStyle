@@ -64,6 +64,8 @@
     fileHighlights: null,
     fileWidths: null,
     changesClosed: new Set(persisted.changesClosed || []),
+    /** The refs pane folded to a strip, for a narrow window. */
+    leftCollapsed: persisted.leftCollapsed || false,
   };
 
   // The row regions currently on screen, rebuilt with the rows themselves.
@@ -79,6 +81,7 @@
       metaWidth: state.metaWidth,
       detailsMax: state.detailsMax,
       changesClosed: [...state.changesClosed],
+      leftCollapsed: state.leftCollapsed,
     });
   }
 
@@ -240,20 +243,24 @@
     // whole width beneath them rather than taking a column beside them.
     const body = el('div', 'body');
     const upper = el('div', 'upper' + (state.detailsVisible && state.detailsMax ? ' hidden' : ''));
-    const left = renderLeft();
-    left.style.flexBasis = state.leftWidth + 'px';
-    upper.appendChild(left);
-    upper.appendChild(
-      renderSplitter({
-        selector: '.left',
-        axis: 'x',
-        min: 140,
-        max: 720,
-        apply: function (size) {
-          state.leftWidth = size;
-        },
-      })
-    );
+    // Folded away the pane costs nothing but its divider, which goes with it:
+    // there is no width left to drag.
+    if (!state.leftCollapsed) {
+      const left = renderLeft();
+      left.style.flexBasis = state.leftWidth + 'px';
+      upper.appendChild(left);
+      upper.appendChild(
+        renderSplitter({
+          selector: '.left',
+          axis: 'x',
+          min: 140,
+          max: 720,
+          apply: function (size) {
+            state.leftWidth = size;
+          },
+        })
+      );
+    }
     upper.appendChild(renderRight());
     body.appendChild(upper);
 
@@ -296,6 +303,18 @@
 
   function renderToolbar() {
     const bar = el('div', 'toolbar');
+    bar.appendChild(
+      iconButton(
+        state.leftCollapsed ? 'chevron-right' : 'chevron-left',
+        state.leftCollapsed ? 'Show the branches pane' : 'Hide the branches pane',
+        function () {
+          state.leftCollapsed = !state.leftCollapsed;
+          save();
+          render();
+        }
+      )
+    );
+    bar.appendChild(el('div', 'sep'));
     bar.appendChild(iconButton('refresh', 'Refresh', function () { post({ type: 'refresh' }); }));
     bar.appendChild(el('div', 'sep'));
     bar.appendChild(iconButton('cloud-download', 'Fetch', function () { post({ type: 'remote', op: 'fetch' }); }));
@@ -945,19 +964,155 @@
       post({ type: 'showCommit', hash: commit.hash });
     });
     node.addEventListener('contextmenu', function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      hideHoverCard();
       selectCommit(commit.hash);
-      showMenu(event, [
-        { label: 'View Commit Details', run: showDetailsPane },
-        { label: 'Copy Commit ID', run: function () { post({ type: 'copyId', hash: commit.hash }); } },
-        '-',
-        { label: 'New Branch from Here…', run: function () { post({ type: 'branchFrom', hash: commit.hash }); } },
-      ]);
+      // The entries depend on the commit - whether it is a merge, the root, or
+      // where HEAD already is - and a history is far too many rows to send a
+      // menu for each with the model. Asked for here, opened on the reply.
+      pendingCommitMenu = { hash: commit.hash, at: { x: event.clientX, y: event.clientY } };
+      post({ type: 'commitMenu', hash: commit.hash });
     });
+    installHoverCard(node, commit);
 
     return node;
   }
 
+  // ------------------------------------------------------------- hover card
+
+  /**
+   * How long the pointer has to rest on a row before its card appears.
+   * Short enough not to feel like a wait, long enough that running the pointer
+   * down the list does not flash a card per row.
+   */
+  const HOVER_DELAY = 450;
+
+  let hoverTimer = null;
+  let hoverCard = null;
+
+  function hideHoverCard() {
+    if (hoverTimer) {
+      clearTimeout(hoverTimer);
+      hoverTimer = null;
+    }
+    if (hoverCard) {
+      hoverCard.remove();
+      hoverCard = null;
+    }
+  }
+
+  /**
+   * Visual Studio's hover card: who wrote the commit, who recorded it, when
+   * each happened, where the repository is, and what the commit says.
+   *
+   * The committer rows are always shown rather than only when they differ,
+   * because the card is read to answer exactly that question.
+   */
+  function showHoverCard(commit, row) {
+    hideHoverCard();
+
+    const card = el('div', 'hover-card');
+    const grid = el('div', 'fields');
+    function field(key, value, className) {
+      grid.appendChild(el('span', 'k', key));
+      grid.appendChild(el('span', 'v' + (className ? ' ' + className : ''), value));
+    }
+
+    field('Commit:', commit.hash, 'mono');
+    field('Author:', commit.author + ' <' + (commit.authorEmail || '') + '>');
+    field('Author Date:', formatDate(commit.date));
+    field('Committer:', (commit.committer || commit.author) + ' <' + (commit.committerEmail || '') + '>');
+    field('Commit Date:', formatDate(commit.committerDate || commit.date));
+    field('Repository Path:', state.model.root, 'path');
+    card.appendChild(grid);
+
+    card.appendChild(el('div', 'hover-subject', commit.subject));
+
+    document.body.appendChild(card);
+    hoverCard = card;
+
+    // Measured after it is in the page, then kept on screen the same way the
+    // context menu is. Offset below the row so the card does not sit under the
+    // pointer and take the hover from it.
+    const box = row.getBoundingClientRect();
+    const size = card.getBoundingClientRect();
+    const at = format.menuPosition(
+      { x: box.left + 40, y: box.bottom + 4 },
+      { width: size.width, height: size.height },
+      { width: window.innerWidth, height: window.innerHeight }
+    );
+    card.style.left = at.x + 'px';
+    card.style.top = at.y + 'px';
+  }
+
+  /** Arms the card for a row, and disarms it when the pointer leaves. */
+  function installHoverCard(node, commit) {
+    node.addEventListener('mouseenter', function () {
+      hideHoverCard();
+      hoverTimer = setTimeout(function () {
+        hoverTimer = null;
+        // The row may have been scrolled out from under the pointer by the
+        // windowing while the delay ran.
+        if (node.isConnected) {
+          showHoverCard(commit, node);
+        }
+      }, HOVER_DELAY);
+    });
+    node.addEventListener('mouseleave', hideHoverCard);
+    node.addEventListener('mousedown', hideHoverCard);
+  }
+
   // ------------------------------------------------------------ details pane
+
+  /** The right-click waiting for its entries; see the commit row's handler. */
+  let pendingCommitMenu = null;
+
+  function commitMenuItems(hash, entries) {
+    const items = [];
+    for (const entry of entries || []) {
+      items.push({
+        label: entry.disabled ? entry.label + '  —  ' + entry.why : entry.label,
+        icon: entry.icon,
+        shortcut: entry.shortcut,
+        checked: entry.checked,
+        disabled: entry.disabled,
+        run: entry.disabled
+          ? function () {}
+          : function () {
+              post({ type: 'commitOp', op: entry.op, hash: hash });
+            },
+      });
+      if (entry.breakAfter) {
+        items.push('-');
+      }
+    }
+    return items;
+  }
+
+  /**
+   * Brings a commit into view after a jump to its parent or child. The row may
+   * not be built - the list is windowed - so the scroller is moved by index and
+   * the windowing fills it in.
+   */
+  function scrollCommitIntoView(hash) {
+    const scroller = root.querySelector('.rows');
+    if (!scroller || !state.model) {
+      return;
+    }
+    const visible = state.model.graph.rows.filter(matches);
+    const at = visible.findIndex(function (row) {
+      return row.commit.hash === hash;
+    });
+    if (at === -1) {
+      return;
+    }
+    const top = at * ROW_H;
+    if (top < scroller.scrollTop || top > scroller.scrollTop + scroller.clientHeight - ROW_H * 2) {
+      scroller.scrollTop = Math.max(0, top - scroller.clientHeight / 2);
+      queueSync();
+    }
+  }
 
   function selectCommit(hash) {
     state.selected = hash;
@@ -1756,6 +1911,17 @@
         } else {
           post({ type: 'diag', label: 'fileDiff.stale', detail: { path: message.path } });
         }
+        break;
+      case 'commitMenu':
+        if (pendingCommitMenu && pendingCommitMenu.hash === message.hash) {
+          dom.showMenuAt(menuEl, pendingCommitMenu.at, commitMenuItems(message.hash, message.entries));
+          pendingCommitMenu = null;
+        }
+        break;
+      case 'revealDetails':
+        selectCommit(message.hash);
+        showDetailsPane();
+        scrollCommitIntoView(message.hash);
         break;
       case 'busy':
         state.busy = message.busy;

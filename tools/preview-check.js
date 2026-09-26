@@ -708,6 +708,80 @@ function inspectBranchRow() {
     });
 }
 
+/** The hover card, the commit menu, and folding the refs pane away. */
+function inspectCommitRowFeatures() {
+  const row = document.querySelector('.rows .commit-row');
+  const result = {};
+
+  row.dispatchEvent(new MouseEvent('mouseenter', { bubbles: false }));
+  result.cardBeforeDelay = !!document.querySelector('.hover-card');
+
+  return new Promise(function (resolve) {
+    // Longer than the card's own delay.
+    setTimeout(resolve, 700);
+  })
+    .then(settle)
+    .then(function () {
+      const card = document.querySelector('.hover-card');
+      result.card = !!card;
+      if (card) {
+        const text = card.textContent;
+        result.cardFields = ['Commit:', 'Author:', 'Author Date:', 'Committer:', 'Commit Date:', 'Repository Path:']
+          .filter(function (key) { return text.indexOf(key) !== -1; }).length;
+        const box = card.getBoundingClientRect();
+        result.cardOnScreen =
+          box.left >= 0 && box.top >= 0 &&
+          box.right <= window.innerWidth && box.bottom <= window.innerHeight;
+        result.cardIgnoresPointer = getComputedStyle(card).pointerEvents === 'none';
+      }
+      row.dispatchEvent(new MouseEvent('mouseleave', { bubbles: false }));
+      return settle();
+    })
+    .then(function () {
+      result.cardGoesAway = !document.querySelector('.hover-card');
+
+      row.dispatchEvent(
+        new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 250, clientY: 250 })
+      );
+      return settle();
+    })
+    .then(settle)
+    .then(function () {
+      const menu = document.getElementById('menu');
+      const items = [...menu.querySelectorAll('.item')];
+      result.menuItems = items.length;
+      result.menuShortcut = !!menu.querySelector('.menu-shortcut');
+      result.menuChecked = !!menu.querySelector('.menu-icon.codicon-check');
+      result.menuDisabled = !!menu.querySelector('.item.disabled');
+      result.noCardWithMenu = !document.querySelector('.hover-card');
+      document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      return settle();
+    })
+    .then(function () {
+      result.leftBefore = !!document.querySelector('.left');
+      const fold = document.querySelector('.toolbar .icon-btn');
+      fold.click();
+      return settle();
+    })
+    .then(settle)
+    .then(function () {
+      result.leftAfter = !!document.querySelector('.left');
+      // Scoped to the upper band: the details pane's own rail divider is
+      // also a vertical splitter and is nothing to do with this.
+      result.splitterGone = !document.querySelector('.upper .splitter.vertical');
+      const rows = document.querySelector('.rows');
+      result.rowsWidened = rows.getBoundingClientRect().width;
+      document.querySelector('.toolbar .icon-btn').click();
+      return settle();
+    })
+    .then(settle)
+    .then(function () {
+      result.leftRestored = !!document.querySelector('.left');
+      result.rowsNarrowed = document.querySelector('.rows').getBoundingClientRect().width;
+      return result;
+    });
+}
+
 /** Selects the first changed file, so the screenshot shows a representative diff. */
 function selectFirstFile() {
   const first = document.querySelector('.changes .tree-row.change-file');
@@ -1199,6 +1273,48 @@ async function main() {
       branch.stillOpenAfterDisabledClick,
       String(branch.stillOpenAfterDisabledClick)
     );
+
+    const rowFeatures = await evaluate(cdp, inspectCommitRowFeatures);
+    check(
+      'resting on a commit row raises a card, but not instantly',
+      !rowFeatures.cardBeforeDelay && rowFeatures.card,
+      'delayed=' + !rowFeatures.cardBeforeDelay + ' shown=' + rowFeatures.card
+    );
+    check(
+      'the card names the commit, both people and both dates',
+      rowFeatures.cardFields === 6,
+      rowFeatures.cardFields + ' of 6 fields'
+    );
+    check(
+      'it stays on screen and never steals the pointer',
+      rowFeatures.cardOnScreen && rowFeatures.cardIgnoresPointer,
+      'onScreen=' + rowFeatures.cardOnScreen + ' inert=' + rowFeatures.cardIgnoresPointer
+    );
+    check('moving off the row takes it away', rowFeatures.cardGoesAway, String(rowFeatures.cardGoesAway));
+    check(
+      'a commit right-click opens the menu the host answered with',
+      rowFeatures.menuItems >= 10,
+      rowFeatures.menuItems + ' items'
+    );
+    check(
+      'and it carries shortcuts, ticks and disabled entries',
+      rowFeatures.menuShortcut && rowFeatures.menuChecked && rowFeatures.menuDisabled,
+      'shortcut=' + rowFeatures.menuShortcut + ' tick=' + rowFeatures.menuChecked +
+        ' disabled=' + rowFeatures.menuDisabled
+    );
+    check(
+      'the card is gone while the menu is up',
+      rowFeatures.noCardWithMenu,
+      String(rowFeatures.noCardWithMenu)
+    );
+    check(
+      'the refs pane folds away and gives its room to the history',
+      rowFeatures.leftBefore && !rowFeatures.leftAfter && rowFeatures.splitterGone &&
+        rowFeatures.rowsWidened > rowFeatures.rowsNarrowed,
+      'history ' + Math.round(rowFeatures.rowsNarrowed) + 'px then ' +
+        Math.round(rowFeatures.rowsWidened) + 'px'
+    );
+    check('and unfolds again', rowFeatures.leftRestored, String(rowFeatures.leftRestored));
 
     const cleared = await evaluate(cdp, applyFilter, '');
     check(

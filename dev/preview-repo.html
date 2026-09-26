@@ -111,6 +111,15 @@
 
   (function prepareModel() {
     const model = window.__VSG_REPO_MODEL;
+    // The captured model predates these fields; the hover card reads them.
+    for (const row of model.graph.rows) {
+      const c = row.commit;
+      const slug = (c.author || 'someone').toLowerCase().replace(/[^a-z]+/g, '.');
+      c.authorEmail = c.authorEmail || slug + '@example.com';
+      c.committer = c.committer || c.author;
+      c.committerEmail = c.committerEmail || slug + '@example.com';
+      c.committerDate = c.committerDate || c.date;
+    }
     model.graph.extras = model.graph.extras || [];
     model.menus = menusFor(model.refs);
   })();
@@ -177,6 +186,26 @@
           window.dispatchEvent(new MessageEvent('message', {
             data: { type: 'model', model: window.__VSG_REPO_MODEL }
           }));
+        }
+        if (message.type === 'commitMenu') {
+          // The shape src/git/commitOps.ts produces. What it offers is settled
+          // by tests/commitOps.test.js; the harness checks that it renders.
+          window.dispatchEvent(new MessageEvent('message', { data: {
+            type: 'commitMenu',
+            hash: message.hash,
+            entries: [
+              { op: 'checkoutDetach', label: 'Checkout (--detach)' },
+              { op: 'viewDetails', label: 'View Commit Details', icon: 'git-commit' },
+              { op: 'compare', label: 'Compare Commits…', icon: 'diff', breakAfter: true },
+              { op: 'newBranch', label: 'New Branch…', icon: 'git-branch' },
+              { op: 'newTag', label: 'New Tag…', icon: 'tag', breakAfter: true },
+              { op: 'revert', label: 'Revert', disabled: true, why: 'The first commit has nothing to undo against' },
+              { op: 'resetHard', label: 'Reset — Discard Changes (--hard)' },
+              { op: 'goToParent', label: 'Go to Parent', icon: 'arrow-down', shortcut: 'Alt+PgDn' },
+              { op: 'outgoingOnly', label: 'Show Outgoing / Incoming Only', checked: true, breakAfter: true },
+              { op: 'newWorktree', label: 'New Worktree From…', icon: 'new-folder' }
+            ]
+          } }));
         }
         if (message.type === 'fileDiff') {
           window.dispatchEvent(new MessageEvent('message', { data: {

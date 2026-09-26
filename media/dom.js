@@ -72,6 +72,17 @@
   function showMenu(menuEl, event, items) {
     event.preventDefault();
     event.stopPropagation();
+    showMenuAt(menuEl, { x: event.clientX, y: event.clientY }, items);
+  }
+
+  /**
+   * The same menu, at a remembered position.
+   *
+   * A menu whose entries have to be fetched cannot be built while the event is
+   * still in hand, so the place the pointer was is kept and passed here when
+   * the answer arrives.
+   */
+  function showMenuAt(menuEl, at, items) {
     menuEl.textContent = '';
 
     for (const item of items) {
@@ -80,8 +91,17 @@
         continue;
       }
       const row = el('div', 'item' + (item.disabled ? ' disabled' : ''));
-      row.appendChild(item.icon ? icon(item.icon, 'menu-icon') : el('span', 'menu-icon'));
-      row.appendChild(el('span', null, item.label));
+      row.appendChild(
+        item.checked
+          ? icon('check', 'menu-icon')
+          : item.icon
+            ? icon(item.icon, 'menu-icon')
+            : el('span', 'menu-icon')
+      );
+      row.appendChild(el('span', 'menu-label', item.label));
+      if (item.shortcut) {
+        row.appendChild(el('span', 'menu-shortcut', item.shortcut));
+      }
       if (item.disabled) {
         // Shown rather than left out, so the menu keeps its shape and the
         // label can say why. It swallows the click: closing the menu on one
@@ -105,13 +125,13 @@
     // a size to keep on screen.
     menuEl.hidden = false;
     const rect = menuEl.getBoundingClientRect();
-    const at = format.menuPosition(
-      { x: event.clientX, y: event.clientY },
+    const placed = format.menuPosition(
+      at,
       { width: rect.width, height: rect.height },
       { width: window.innerWidth, height: window.innerHeight }
     );
-    menuEl.style.left = at.x + 'px';
-    menuEl.style.top = at.y + 'px';
+    menuEl.style.left = placed.x + 'px';
+    menuEl.style.top = placed.y + 'px';
   }
 
   function hideMenu(menuEl) {
@@ -196,6 +216,7 @@
     iconButton: iconButton,
     link: link,
     showMenu: showMenu,
+    showMenuAt: showMenuAt,
     hideMenu: hideMenu,
   };
 

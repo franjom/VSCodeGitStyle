@@ -4,6 +4,15 @@ import { readFileDiff } from '../git/diff';
 import { Git } from '../git/git';
 import { Diagnostics } from '../diagnostics';
 import {
+  CommitOp,
+  CommitContext,
+  commitArgs,
+  commitConfirmation,
+  commitMenu,
+  CommitTarget,
+  stepTo,
+} from '../git/commitOps';
+import {
   BranchOp,
   branchArgs,
   branchMenu,
@@ -71,7 +80,9 @@ type Inbound =
     }
   | { type: 'fileDiff'; hash: string; path: string; origPath?: string }
   | { type: 'diag'; label: string; detail?: Record<string, unknown>; failed?: boolean }
-  | { type: 'branchOp'; op: BranchOp; ref: string };
+  | { type: 'branchOp'; op: BranchOp; ref: string }
+  | { type: 'commitMenu'; hash: string }
+  | { type: 'commitOp'; op: CommitOp; hash: string };
 
 /**
  * The Git Repository window: Visual Studio's full-screen commit graph, as a
@@ -119,6 +130,11 @@ export class RepositoryWindow {
   private scope: string | undefined;
   /** Branches drawn alongside the scope, from the eye toggle in the tree. */
   private extras: string[] = [];
+  /** The graph as last sent, so a menu can be built without reading git again. */
+  private lastGraph: GraphModel | undefined;
+  private currentBranch: string | undefined;
+  /** Visual Studio's "Show Outgoing / Incoming Only". */
+  private outgoingOnly = false;
   /** Repo-relative path when the window is showing one file's history. */
   private file: string | undefined;
   private limit = pageSize();
@@ -274,6 +290,14 @@ export class RepositoryWindow {
         case 'branchOp':
           await this.branchOp(message);
           return;
+
+        case 'commitMenu':
+          await this.sendCommitMenu(message.hash);
+          return;
+
+        case 'commitOp':
+          await this.commitOp(message);
+          return;
       }
     } catch (err) {
       void vscode.window.showErrorMessage(
@@ -296,8 +320,11 @@ export class RepositoryWindow {
       this.scope,
       this.limit,
       this.file,
-      this.extras
+      this.extras,
+      this.outgoingOnly
     );
+    this.lastGraph = graph;
+    this.currentBranch = refs.find((r) => r.current)?.short;
     const configured = vscode.workspace
       .getConfiguration('vsGitStyle')
       .get<ReviewProvider | 'auto'>('reviewProvider', 'auto');
@@ -652,6 +679,233 @@ export class RepositoryWindow {
     this.extras = this.extras.includes(ref)
       ? this.extras.filter((other) => other !== ref)
       : [...this.extras, ref];
+  }
+
+  /**
+   * The menu for one commit, answered on demand.
+   *
+   * Unlike the branch menus, which ride along with the model, this is asked for
+   * when the pointer is already down: a history is thousands of rows and their
+   * menus would dwarf the graph. The round trip is one message and the menu
+   * opens on the reply.
+   */
+  private async sendCommitMenu(hash: string): Promise<void> {
+    const row = this.lastGraph?.rows.find((entry) => entry.commit.hash === hash);
+    if (!row) {
+      return;
+    }
+    const head = await this.git.exec(this.root, ['rev-parse', 'HEAD']).catch(() => '');
+    const entries = commitMenu(
+      {
+        hash: row.commit.hash,
+        shortHash: row.commit.shortHash,
+        subject: row.commit.subject,
+        parents: row.commit.parents,
+        outgoing: row.outgoing,
+        isHead: head.trim() === row.commit.hash,
+      },
+      { current: this.currentBranch, filtered: this.outgoingOnly }
+    );
+    this.post({ type: 'commitMenu', hash, entries });
+  }
+
+  /**
+   * Runs a commit context-menu action. Same shape as branchOp: the decisions
+   * are in commitOps.ts, this prompts and runs.
+   */
+  private async commitOp(message: Extract<Inbound, { type: 'commitOp' }>): Promise<void> {
+    const row = this.lastGraph?.rows.find((entry) => entry.commit.hash === message.hash);
+    if (!row) {
+      return;
+    }
+    const target: CommitTarget = {
+      hash: row.commit.hash,
+      shortHash: row.commit.shortHash,
+      subject: row.commit.subject,
+      parents: row.commit.parents,
+      outgoing: row.outgoing,
+    };
+    const context: CommitContext = { target, current: this.currentBranch };
+
+    switch (message.op) {
+      case 'viewDetails':
+        this.post({ type: 'revealDetails', hash: target.hash });
+        return;
+      case 'viewPatch':
+        await this.showCommit(target.hash);
+        return;
+      case 'copyId':
+        await vscode.env.clipboard.writeText(target.hash);
+        void vscode.window.setStatusBarMessage(`Copied ${target.shortHash}`, 2000);
+        return;
+      case 'refresh':
+        await this.load();
+        return;
+      case 'outgoingOnly':
+        this.outgoingOnly = !this.outgoingOnly;
+        await this.load();
+        return;
+      case 'goToParent':
+      case 'goToChild': {
+        const to = stepTo(
+          message.op === 'goToParent' ? 'parent' : 'child',
+          target.hash,
+          (this.lastGraph?.rows ?? []).map((entry) => ({
+            hash: entry.commit.hash,
+            parents: entry.commit.parents,
+          }))
+        );
+        if (!to) {
+          void vscode.window.setStatusBarMessage(
+            message.op === 'goToParent'
+              ? 'No parent in the loaded history.'
+              : 'No child in the loaded history.',
+            2500
+          );
+          return;
+        }
+        this.post({ type: 'revealDetails', hash: to });
+        return;
+      }
+      case 'compare':
+        await this.compareCommits(target);
+        return;
+      default:
+        break;
+    }
+
+    if (message.op === 'newBranch' || message.op === 'newTag') {
+      const name = await vscode.window.showInputBox({
+        title:
+          message.op === 'newBranch'
+            ? `New branch at ${target.shortHash}`
+            : `New tag at ${target.shortHash}`,
+        prompt: target.subject,
+        validateInput: (value) =>
+          value.trim() ? undefined : 'Enter a name.',
+      });
+      if (!name?.trim()) {
+        return;
+      }
+      context.name = name.trim();
+      if (message.op === 'newTag') {
+        // Left empty on purpose gives a lightweight tag, which is the right
+        // default for marking a point rather than describing one.
+        context.message = (
+          await vscode.window.showInputBox({
+            title: `Message for tag '${context.name}'`,
+            prompt: 'Leave empty for a lightweight tag',
+          })
+        )?.trim();
+      }
+    }
+
+    if (message.op === 'newWorktree') {
+      const parent = await vscode.window.showOpenDialog({
+        title: `Where should the worktree at ${target.shortHash} go?`,
+        canSelectFolders: true,
+        canSelectFiles: false,
+        openLabel: 'Create Worktree Here',
+      });
+      if (!parent?.length) {
+        return;
+      }
+      context.path = path.join(parent[0]!.fsPath, target.shortHash);
+    }
+
+    const ask = commitConfirmation(message.op, context);
+    if (ask) {
+      const chosen = await vscode.window.showWarningMessage(
+        ask.message,
+        { modal: true, detail: ask.detail },
+        ask.confirm
+      );
+      if (chosen !== ask.confirm) {
+        return;
+      }
+    }
+
+    const args = commitArgs(message.op, context);
+    if (!args) {
+      return;
+    }
+    const done = this.diagnostics?.begin('commitOp', {
+      op: message.op,
+      hash: target.shortHash,
+    });
+    try {
+      await this.git.exec(this.root, args);
+      done?.();
+    } catch (err) {
+      done?.({ failed: true });
+      this.diagnostics?.error('commitOp', err, { op: message.op, hash: target.shortHash });
+      void vscode.window.showErrorMessage(err instanceof Error ? err.message : String(err));
+    }
+    await this.load();
+  }
+
+  /**
+   * Compares this commit with another the user picks, file by file.
+   *
+   * Visual Studio greys its own entry until two rows are selected; the history
+   * here has no multi-select, so the second commit is asked for instead, which
+   * puts the whole loaded history in reach rather than the row next to it.
+   */
+  private async compareCommits(target: CommitTarget): Promise<void> {
+    const rows = this.lastGraph?.rows ?? [];
+    const picked = await vscode.window.showQuickPick(
+      rows
+        .filter((row) => row.commit.hash !== target.hash)
+        .slice(0, 500)
+        .map((row) => ({
+          label: row.commit.subject,
+          description: row.commit.shortHash,
+          detail: `${row.commit.author} · ${row.commit.date}`,
+          hash: row.commit.hash,
+        })),
+      {
+        title: `Compare ${target.shortHash} with…`,
+        placeHolder: 'Pick the other commit',
+        matchOnDescription: true,
+      }
+    );
+    if (!picked) {
+      return;
+    }
+    const out = await this.git.exec(this.root, [
+      'diff',
+      '--name-status',
+      '-z',
+      '-M',
+      picked.hash,
+      target.hash,
+    ]);
+    const files = parseNameStatus(out);
+    if (!files.length) {
+      void vscode.window.showInformationMessage('Those two commits have the same content.');
+      return;
+    }
+    const file = await vscode.window.showQuickPick(
+      files.map((entry) => ({
+        label: entry.path.split('/').pop() ?? entry.path,
+        description: entry.status,
+        detail: entry.path,
+        entry,
+      })),
+      {
+        title: `${files.length} file(s) differ between ${picked.description} and ${target.shortHash}`,
+        matchOnDetail: true,
+      }
+    );
+    if (!file) {
+      return;
+    }
+    await vscode.commands.executeCommand(
+      'vscode.diff',
+      this.blobUri(picked.hash, file.entry.origPath ?? file.entry.path),
+      this.blobUri(target.hash, file.entry.path),
+      `${file.label} (${picked.description} ↔ ${target.shortHash})`
+    );
   }
 
   private blobUri(rev: string, filePath: string): vscode.Uri {
