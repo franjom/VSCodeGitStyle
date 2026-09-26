@@ -829,6 +829,12 @@
         },
         '-',
         {
+          icon: 'folder-opened',
+          label: 'Reveal in File Explorer',
+          run: function () { post({ type: 'revealInExplorer', path: change.path }); },
+        },
+        '-',
+        {
           label: 'Ignore and Untrack item',
           run: function () { post({ type: 'ignoreAndUntrack', path: change.path }); },
         },

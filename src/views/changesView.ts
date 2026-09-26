@@ -1,3 +1,4 @@
+import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { countChanges, Git, RepoSnapshot } from '../git/git';
@@ -38,6 +39,7 @@ type Inbound =
   | { type: 'stage'; paths: string[] }
   | { type: 'unstage'; paths: string[] }
   | { type: 'openFile'; path: string }
+  | { type: 'revealInExplorer'; path: string }
   | { type: 'viewHistory'; path: string }
   | { type: 'blame'; path: string }
   | { type: 'ignoreAndUntrack'; path: string }
@@ -315,6 +317,24 @@ export class ChangesViewProvider implements vscode.WebviewViewProvider {
             { preview: true }
           );
           break;
+
+        case 'revealInExplorer': {
+          // VS Code's own command, which opens the containing folder with the
+          // file selected and knows what the file manager is called on each
+          // platform - Explorer, Finder, or whatever is configured here.
+          //
+          // A deleted file is still listed here and has nothing left to select,
+          // so the folder that held it is revealed instead. Walking up rather
+          // than stopping at the first missing directory, because a deletion
+          // that emptied a folder takes the folder with it.
+          const full = path.join(root, message.path);
+          let target = full;
+          while (target !== root && !fs.existsSync(target)) {
+            target = path.dirname(target);
+          }
+          await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(target));
+          break;
+        }
 
         case 'viewHistory':
           await vscode.commands.executeCommand('vsGitStyle.viewFileHistory', message.path);
