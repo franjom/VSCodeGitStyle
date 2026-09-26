@@ -2,7 +2,7 @@
   "name": "vs-git-style",
   "displayName": "VS Git Style",
   "description": "Visual Studio 2026 style Git Changes panel for VS Code.",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "publisher": "local",
   "private": true,
   "license": "MIT",
