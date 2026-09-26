@@ -212,6 +212,84 @@ test('an empty line yields no segments', () => {
   assert.deepEqual(mergeSegments(0, [], []), []);
 });
 
+// ------------------------------------------------------------- termination
+//
+// A branch that matches a character but consumes none of it spins forever.
+// `@` did: it opens a word without being a word character, so the identifier
+// reader took nothing and the loop came round to it again. Every one of these
+// hung the webview outright - a Java file with an annotation in it was enough.
+//
+// The timeouts are the assertion. A regression here fails the run rather than
+// wedging it.
+
+const SOON = { timeout: 5000 };
+
+test('an annotation does not spin the lexer', SOON, () => {
+  assert.deepEqual(highlightLines(['    @Override'], 'clike')[0], []);
+});
+
+test('every language survives the characters that open a word without being one', SOON, () => {
+  const awkward = [
+    '@Override',
+    '@app.route("/x")',
+    '@media (min-width: 40px) {',
+    'var s = @"c:\\temp";',
+    '<Tag @attr="v" />',
+    'email@example.com',
+    '@',
+    '@@',
+    ' @ ',
+    '$',
+    '$$scope',
+    '#{interpolated}',
+  ];
+  for (const language of ['clike', 'python', 'ruby', 'shell', 'sql', 'css', 'json', 'yaml', 'markup']) {
+    for (const line of awkward) {
+      const tokens = highlightLines([line], language)[0];
+      assert.ok(Array.isArray(tokens), language + ' on ' + JSON.stringify(line));
+    }
+  }
+});
+
+test('tokens stay inside the line and never overlap, whatever the input', SOON, () => {
+  // The guard advances the index by one when a branch consumes nothing, which
+  // must not be allowed to produce a token that runs off the end.
+  const lines = ['@Override', '@', '<a @b="c">', '@media{', 'x @ y'];
+  for (const language of ['clike', 'css', 'markup']) {
+    for (const line of lines) {
+      let at = 0;
+      for (const token of highlightLines([line], language)[0] || []) {
+        assert.ok(token.start >= at, 'tokens are in order in ' + JSON.stringify(line));
+        assert.ok(token.end <= line.length, 'and inside the line');
+        assert.ok(token.end > token.start, 'and not empty');
+        at = token.end;
+      }
+    }
+  }
+});
+
+test('a real Java file with annotations is coloured without hanging', SOON, () => {
+  const file = [
+    'package toniarts.openkeeper.gui.nifty;',
+    '',
+    '@Override',
+    'public void onStartScreen() {',
+    '    @SuppressWarnings("unchecked")',
+    '    List<String> names = new ArrayList<>();',
+    '}',
+  ];
+  const out = highlightLines(file, 'clike');
+  assert.equal(out.length, file.length);
+  assert.ok(
+    out[3].some((t) => t.type === 'keyword'),
+    'the ordinary lines are still coloured'
+  );
+  assert.ok(
+    out[4].some((t) => t.type === 'string'),
+    'including the string inside the annotation'
+  );
+});
+
 // -------------------------------------------------------------------- limits
 //
 // Every segment becomes an element and the diff draws a screenful of rows at a

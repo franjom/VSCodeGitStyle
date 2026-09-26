@@ -244,7 +244,17 @@
       state = null;
     }
 
+    // A branch that matches its character but consumes none of it would spin
+    // here forever. Every branch below is written to advance, and this makes
+    // certain of it: the same input at the same index always takes the same
+    // branch, so an index that has not moved never will.
+    let lastAt = -1;
     while (i < line.length) {
+      if (i === lastAt) {
+        i++;
+        continue;
+      }
+      lastAt = i;
       const ch = line[i];
 
       if (ch === ' ' || ch === '\t') {
@@ -298,6 +308,11 @@
 
       if (isWordStart(ch)) {
         const start = i;
+        // The opening character is always taken. `@` opens a word - a Java
+        // annotation, a Python decorator, a C# verbatim string - but is not
+        // itself a word character, so reading only word characters consumed
+        // nothing and the loop spun on it forever.
+        i++;
         while (i < line.length && isWordChar(line[i])) {
           i++;
         }
@@ -364,8 +379,16 @@
       }
       push(tokens, nameStart, i, 'keyword');
 
-      // Attributes up to the tag's end.
+      // Attributes up to the tag's end. Same guard, and for the same reason:
+      // an attribute beginning with `@` - a XAML binding, an MSBuild item -
+      // opened a name that matched no name character.
+      let attrAt = -1;
       while (i < line.length && line[i] !== '>') {
+        if (i === attrAt) {
+          i++;
+          continue;
+        }
+        attrAt = i;
         const ch = line[i];
         if (ch === '"' || ch === "'") {
           i = readString(line, i, ch, tokens);
@@ -373,6 +396,7 @@
         }
         if (isWordStart(ch)) {
           const start = i;
+          i++;
           while (i < line.length && /[\w.:-]/.test(line[i])) {
             i++;
           }
