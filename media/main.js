@@ -479,6 +479,86 @@
     return section;
   }
 
+  /**
+   * The context menu for a folder row. Everything it offers is done to every
+   * file beneath it - git takes a directory as a pathspec, so one command does
+   * the lot rather than one per file.
+   *
+   * The entries that can only mean something for a single file are shown
+   * disabled rather than left out, so the folder menu and the file menu read as
+   * the same menu. Visual Studio greys exactly these three.
+   */
+  function folderMenuItems(node, kind) {
+    const staged = kind === 'staged';
+    const conflicts = kind === 'conflicts';
+    const files = node.fileCount === 1 ? '1 file' : node.fileCount + ' files';
+
+    const items = [
+      { icon: 'go-to-file', label: 'Open', disabled: true, why: 'a folder has nothing to open' },
+    ];
+
+    if (conflicts) {
+      // A conflict is resolved one file at a time, so the folder has no
+      // staging action to offer - the same reason its hover buttons are empty.
+      items.push({
+        icon: 'add',
+        label: 'Stage',
+        disabled: true,
+        why: 'resolve the conflicts first',
+      });
+    } else if (staged) {
+      items.push({
+        icon: 'remove',
+        label: 'Unstage',
+        run: function () { post({ type: 'unstage', paths: [node.key] }); },
+      });
+    } else {
+      items.push({
+        icon: 'add',
+        label: 'Stage',
+        run: function () { post({ type: 'stage', paths: [node.key] }); },
+      });
+      items.push({
+        icon: 'discard',
+        label: 'Undo Changes…',
+        run: function () { post({ type: 'discardFolder', path: node.key }); },
+      });
+    }
+
+    items.push('-');
+    items.push({
+      icon: 'history',
+      label: 'View History',
+      run: function () { post({ type: 'viewHistory', path: node.key }); },
+    });
+    items.push({
+      icon: 'git-compare',
+      label: 'Compare with Unmodified…',
+      disabled: true,
+      why: 'pick a single file',
+    });
+    items.push({
+      icon: 'account',
+      label: 'Blame (Annotate)',
+      disabled: true,
+      why: 'pick a single file',
+    });
+    items.push('-');
+    items.push({
+      icon: 'folder-opened',
+      label: 'Reveal in File Explorer',
+      run: function () { post({ type: 'revealInExplorer', path: node.key }); },
+    });
+
+    // The label carries the reason, the way the branch and commit menus do.
+    return items.map(function (item) {
+      if (item === '-' || !item.disabled) {
+        return item;
+      }
+      return Object.assign({}, item, { label: item.label + '  —  ' + item.why, run: function () {} });
+    });
+  }
+
   function renderNodes(container, nodes, depth, prefix, kind) {
     const isStagedSection = kind === 'staged';
     const isConflicts = kind === 'conflicts';
@@ -497,6 +577,9 @@
         folderRow.title = node.label + ' \u2014 ' + node.fileCount + ' file(s)';
         folderRow.addEventListener('click', function () {
           toggle(key, open);
+        });
+        folderRow.addEventListener('contextmenu', function (event) {
+          showMenu(event, folderMenuItems(node, kind));
         });
 
         // Whole-folder actions on hover, as Visual Studio offers. Conflicts

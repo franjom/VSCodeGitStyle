@@ -489,3 +489,45 @@ test('a branch toggled in twice, or equal to the scope, is counted once', async 
   ]);
   assert.deepEqual(graph.extras, ['feature/one'], 'duplicates, the scope and blanks are dropped');
 });
+
+// ------------------------------------------------------------ folder history
+
+test('a folder path gives the history of everything under it', async (t) => {
+  // "View History" on a folder row sends a directory where the file rows send
+  // a file, and readGraph passes --follow either way. git documents --follow
+  // for a single file; with a directory it simply finds no rename to follow.
+  // If that ever stops being true, folder history breaks, so it is pinned.
+  const repo = new TestRepo();
+  t.after(() => repo.dispose());
+
+  repo.write('src/api/one.ts', 'one\n');
+  repo.write('docs/note.md', 'note\n');
+  repo.commit('Initial');
+
+  repo.write('src/api/two.ts', 'two\n');
+  repo.commit('Touches the folder');
+
+  repo.write('docs/note.md', 'changed\n');
+  repo.commit('Touches somewhere else');
+
+  const graph = await readGraph(git, repo.dir, 'main', 50, 'src/api');
+  const subjects = graph.rows.map((r) => r.commit.subject);
+
+  assert.ok(subjects.includes('Touches the folder'));
+  assert.ok(subjects.includes('Initial'), 'the commit that created it counts too');
+  assert.ok(
+    !subjects.includes('Touches somewhere else'),
+    'and a commit that missed the folder does not'
+  );
+  assert.equal(graph.file, 'src/api', 'the breadcrumb still says what it is scoped to');
+});
+
+test('a folder with no history of its own comes back empty, not broken', async (t) => {
+  const repo = new TestRepo();
+  t.after(() => repo.dispose());
+  repo.write('a.txt', 'a\n');
+  repo.commit('Initial');
+
+  const graph = await readGraph(git, repo.dir, 'main', 50, 'never/existed');
+  assert.deepEqual(graph.rows, []);
+});
