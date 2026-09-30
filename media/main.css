@@ -107,21 +107,33 @@ body {
   padding: 6px 8px 8px;
 }
 
+/* The box, not the textarea, draws the field, so the generate button can sit
+   in a strip of its own under the text. Floated over the textarea's corner it
+   covered the resize grip, and text scrolled underneath it. */
 .commit-box {
-  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: var(--vscode-input-background, #313131);
+  border: 1px solid var(--vscode-input-border, var(--vsg-border));
+  border-radius: 2px;
+}
+
+.commit-box:focus-within {
+  outline: 1px solid var(--vscode-focusBorder, #0078d4);
+  outline-offset: -1px;
 }
 
 .commit-box textarea {
   display: block;
   width: 100%;
-  min-height: 74px;
+  min-height: 52px;
   max-height: 220px;
-  padding: 5px 6px 22px;
+  padding: 5px 6px 2px;
   resize: vertical;
   color: var(--vscode-input-foreground, #cccccc);
-  background: var(--vscode-input-background, #313131);
-  border: 1px solid var(--vscode-input-border, var(--vsg-border));
-  border-radius: 2px;
+  background: transparent;
+  border: none;
+  outline: none;
   font-family: inherit;
   font-size: inherit;
   line-height: 1.4;
@@ -132,17 +144,11 @@ body {
   color: var(--vscode-input-placeholderForeground, #8b8b8b);
 }
 
-.commit-box textarea:focus {
-  outline: 1px solid var(--vscode-focusBorder, #0078d4);
-  outline-offset: -1px;
-}
-
 .commit-box .generate {
-  position: absolute;
-  right: 4px;
-  bottom: 4px;
+  align-self: flex-end;
   width: 22px;
   height: 22px;
+  margin: 0 2px 2px 0;
 }
 
 .commit-box .generate.spinning .codicon {
@@ -438,6 +444,43 @@ body {
   font-size: 12px;
   background: var(--vscode-inputValidation-infoBackground, rgba(100, 148, 237, 0.12));
   border: 1px solid var(--vscode-inputValidation-infoBorder, #4daafc);
+}
+
+.error-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0 8px 6px;
+  padding: 4px 4px 4px 8px;
+  border-radius: 3px;
+  font-size: 12px;
+  background: var(--vscode-inputValidation-errorBackground, rgba(241, 76, 76, 0.12));
+  border: 1px solid var(--vscode-inputValidation-errorBorder, #f14c4c);
+}
+
+.error-bar > .codicon {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  font-size: 14px;
+  color: var(--vscode-errorForeground, #f14c4c);
+}
+
+/* A hook can print a screenful; the bar must not push the file lists off the
+   view, so it scrolls instead of growing past a few lines. */
+.error-bar .text {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-height: 120px;
+  overflow: auto;
+  padding-top: 1px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.error-bar .icon-btn {
+  flex: 0 0 auto;
 }
 
 .op-banner.blocked {

@@ -57,6 +57,12 @@ const MUTATIONS = [
     to: "        const origPath = toPosix(tokens[i + 1] ?? '');",
   },
   {
+    label: 'a failed command reports only stderr (git and hooks also use stdout)',
+    file: GIT_TS,
+    from: '  const output = [stderr, stdout]',
+    to: '  const output = [stderr]',
+  },
+  {
     label: 'amend with an empty box blanks the message',
     file: GIT_TS,
     from:

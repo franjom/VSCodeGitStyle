@@ -19,6 +19,12 @@ interface ViewModel {
   };
   separator: string;
   canGenerateMessage: boolean;
+  /**
+   * Why the snapshot could not be read. It travels in the model, not as a
+   * message of its own, because the model posted right behind such a message
+   * replaced it before anyone could read it.
+   */
+  error?: string;
 }
 
 type Inbound =
@@ -188,7 +194,7 @@ export class ChangesViewProvider implements vscode.WebviewViewProvider {
           displayRoot: this.activeRoot,
         };
       } catch (err) {
-        this.post({ type: 'error', message: describe(err) });
+        model.error = describe(err);
       }
     } else {
       this.setBadge(0);
@@ -393,7 +399,10 @@ export class ChangesViewProvider implements vscode.WebviewViewProvider {
           break;
       }
     } catch (err) {
-      void vscode.window.showErrorMessage(describe(err));
+      // Shown in the view, as Visual Studio shows a failed commit in the Git
+      // Changes window. A toast was easy to miss, and gone once dismissed,
+      // while hook output often needs reading more than once.
+      this.post({ type: 'error', message: describe(err) });
     } finally {
       this.busy(false);
       this.scheduleRefresh(50);

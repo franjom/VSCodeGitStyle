@@ -277,6 +277,40 @@ test('amending with no message keeps the previous one', async (t) => {
   );
 });
 
+test('a commit with nothing staged fails with git saying so, not with the message', async (t) => {
+  const repo = new TestRepo();
+  t.after(() => repo.dispose());
+  repo.write('a.txt', 'a\n');
+  repo.commit('first');
+
+  // git writes this one to stdout, which the error used to drop.
+  await assert.rejects(git.commit(repo.dir, 'A message nobody needs to see again', false), (err) => {
+    assert.match(err.message, /nothing to commit/);
+    assert.doesNotMatch(err.message, /nobody needs to see/);
+    return true;
+  });
+});
+
+test('a pre-commit hook that refuses is reported in its own words', async (t) => {
+  const repo = new TestRepo();
+  t.after(() => repo.dispose());
+  repo.write('a.txt', 'a\n');
+  repo.commit('first');
+  // Printed to stdout, as many hook scripts do.
+  const hook = repo.write(
+    '.git/hooks/pre-commit',
+    '#!/bin/sh\necho "kb check: verdict changed without a History line"\nexit 1\n'
+  );
+  require('node:fs').chmodSync(hook, 0o755);
+  repo.write('a.txt', 'b\n');
+  repo.git(['add', '-A']);
+
+  await assert.rejects(git.commit(repo.dir, 'change a', false), (err) => {
+    assert.match(err.message, /verdict changed without a History line/);
+    return true;
+  });
+});
+
 test('discard reverts a tracked file and deletes an untracked one', async (t) => {
   const repo = new TestRepo();
   t.after(() => repo.dispose());

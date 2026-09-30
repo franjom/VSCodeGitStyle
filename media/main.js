@@ -11,7 +11,7 @@
 
   const persisted = vscode.getState() || {};
 
-  /** @type {{model: any, expanded: Set<string>, sections: Record<string, boolean>, message: string, amend: boolean, selected: string|null, busy: boolean, generating: boolean, error: string|null}} */
+  /** @type {{model: any, expanded: Set<string>, sections: Record<string, boolean>, message: string, messageHeight: number, amend: boolean, selected: string|null, busy: boolean, generating: boolean, error: string|null}} */
   const state = {
     model: null,
     collapsedNodes: new Set(persisted.collapsedNodes || []),
@@ -20,6 +20,7 @@
       persisted.sections
     ),
     message: persisted.message || '',
+    messageHeight: persisted.messageHeight || 0,
     amend: false,
     selected: null,
     busy: false,
@@ -32,8 +33,21 @@
       collapsedNodes: [...state.collapsedNodes],
       sections: state.sections,
       message: state.message,
+      messageHeight: state.messageHeight,
     });
   }
+
+  // Every render builds a fresh textarea, which came back at its CSS height and
+  // threw away whatever the user had dragged it to. One observer, moved to each
+  // new textarea, keeps the height in the state instead.
+  const messageResize = new ResizeObserver(function (entries) {
+    const height = entries[0].target.offsetHeight;
+    // A hidden view measures zero; that is not a size anyone chose.
+    if (height > 0 && height !== state.messageHeight) {
+      state.messageHeight = height;
+      save();
+    }
+  });
 
   function post(message) {
     vscode.postMessage(message);
@@ -73,7 +87,11 @@
       root.appendChild(el('div', 'empty', 'Loading\u2026'));
       return;
     }
+    const failure = state.error || state.model.error;
     if (!active) {
+      if (failure) {
+        root.appendChild(renderErrorBar(failure));
+      }
       root.appendChild(
         el('div', 'empty', 'No Git repository found in this workspace.')
       );
@@ -85,6 +103,9 @@
       root.appendChild(renderOperationBanner(active));
     }
     root.appendChild(renderCommitArea(active));
+    if (failure) {
+      root.appendChild(renderErrorBar(failure));
+    }
 
     const content = el('div', 'content');
     // Unresolved conflicts block the commit entirely, so they go first.
@@ -221,6 +242,24 @@
     return banner;
   }
 
+  function renderErrorBar(text) {
+    const bar = el('div', 'error-bar');
+    bar.appendChild(icon('error'));
+    // Selectable and whole: hook output is often several lines, and is what
+    // the user needs to act on.
+    bar.appendChild(el('div', 'text', text));
+    bar.appendChild(
+      iconButton('close', 'Dismiss', function () {
+        state.error = null;
+        if (state.model) {
+          state.model.error = undefined;
+        }
+        render();
+      })
+    );
+    return bar;
+  }
+
   function renderCommitArea(active) {
     const area = el('div', 'commit-area');
 
@@ -239,6 +278,11 @@
         commit('all');
       }
     });
+    if (state.messageHeight) {
+      textarea.style.height = state.messageHeight + 'px';
+    }
+    messageResize.disconnect();
+    messageResize.observe(textarea);
     box.appendChild(textarea);
 
     const generate = iconButton(
@@ -1013,11 +1057,16 @@
     const message = event.data;
     switch (message.type) {
       case 'model':
+        // Not clearing state.error: the refresh that follows every action would
+        // take its failure off the screen as soon as it arrived.
         state.model = message.model;
-        state.error = null;
         render();
         break;
       case 'busy':
+        // Starting another action is taken as having read the last failure.
+        if (message.busy) {
+          state.error = null;
+        }
         state.busy = message.busy;
         render();
         break;
@@ -1038,6 +1087,7 @@
         break;
       case 'error':
         state.error = message.message;
+        render();
         break;
     }
   });

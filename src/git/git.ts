@@ -70,6 +70,26 @@ export interface GitError extends Error {
  * through the built-in git commands so that VS Code's credential plumbing
  * (GIT_ASKPASS, auth providers) stays in play. See extension.ts.
  */
+/**
+ * What a failed git command is reported as: git's own words, not the command
+ * line. The whole argument list used to lead the message, and for a commit that
+ * is the commit message itself - which then crowded out the reason. Both streams
+ * are kept because git is not consistent about which one it uses: "nothing to
+ * commit" goes to stdout, and a hook prints wherever its author chose.
+ */
+export function failureMessage(
+  args: string[],
+  stdout: string,
+  stderr: string,
+  fallback: string
+): string {
+  const output = [stderr, stdout]
+    .map((text) => text.trim())
+    .filter((text) => text !== '')
+    .join('\n');
+  return `git ${args[0] ?? ''} failed: ${output || fallback}`;
+}
+
 /** NUL, the record separator used by git's -z output. */
 const SEPARATOR = String.fromCharCode(0);
 
@@ -85,7 +105,7 @@ export class Git {
         (err, stdout, stderr) => {
           if (err) {
             const wrapped = new Error(
-              `git ${args.join(' ')} failed: ${stderr || err.message}`
+              failureMessage(args, stdout ?? '', stderr ?? '', err.message)
             ) as GitError;
             wrapped.stderr = stderr ?? '';
             wrapped.exitCode = typeof (err as unknown as { code?: number }).code === 'number'
