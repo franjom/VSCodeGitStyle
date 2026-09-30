@@ -19,6 +19,29 @@ export interface FileNode {
 
 export type TreeNode = FolderNode | FileNode;
 
+/**
+ * The repository root as a pathspec, spelled the way git spells it, so the
+ * root row can be handed to the same commands a folder row is - `git add -- .`
+ * and `git checkout -- .` do the whole tree.
+ */
+export const ROOT = '.';
+
+/**
+ * Whether a change lies under a folder.
+ *
+ * The root is a special case rather than a prefix: "./" is not how any path in
+ * a porcelain listing begins, so matching it as a prefix would quietly select
+ * nothing and a discard of the whole tree would do nothing at all. The
+ * separator is appended for every other folder so that "src" does not claim
+ * the files of "src2".
+ */
+export function isUnder(filePath: string, folder: string): boolean {
+  if (folder === ROOT) {
+    return true;
+  }
+  return filePath.startsWith(folder.endsWith('/') ? folder : `${folder}/`);
+}
+
 interface Builder {
   dirs: Map<string, Builder>;
   files: FileChange[];

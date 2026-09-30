@@ -469,6 +469,12 @@
     repoRow.addEventListener('click', function () {
       toggle(repoKey, repoOpen);
     });
+    // Visual Studio gives the root row the folder menu, applied to the whole
+    // tree. "." is git's own name for the root as a pathspec, so the same
+    // commands serve; the extension side knows to read it as the repository.
+    repoRow.addEventListener('contextmenu', function (event) {
+      showMenu(event, folderMenuItems({ key: '.', fileCount: changes.length }, kind));
+    });
     tree.appendChild(repoRow);
 
     if (repoOpen) {

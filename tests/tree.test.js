@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { buildTree } = require('../out/git/tree.js');
+const { buildTree, isUnder, ROOT } = require('../out/git/tree.js');
 
 const SEP = String.fromCharCode(92); // backslash, as shown on Windows
 
@@ -118,4 +118,21 @@ test('an empty change list gives an empty tree', () => {
 test('paths containing spaces are kept intact', () => {
   const tree = buildTree([change('my folder/my file.cs')], SEP);
   assert.deepEqual(outline(tree), ['+ my folder', '  my file.cs']);
+});
+
+// ------------------------------------------------------------------ isUnder
+
+test('the repository root, spelled the way git spells it, takes every change', () => {
+  // A discard from the root row once matched nothing, because "./" is not how
+  // any listed path begins - so the root must not be treated as a prefix.
+  assert.equal(isUnder('a.txt', ROOT), true);
+  assert.equal(isUnder('src/api/a.cs', ROOT), true);
+});
+
+test('a folder claims the files beneath it and nothing beside it', () => {
+  assert.equal(isUnder('src/api/a.cs', 'src'), true);
+  assert.equal(isUnder('src/api/a.cs', 'src/api'), true);
+  assert.equal(isUnder('src/api/a.cs', 'src/'), true);
+  assert.equal(isUnder('src2/a.cs', 'src'), false, 'a prefix of the name is not the folder');
+  assert.equal(isUnder('a.cs', 'src'), false);
 });

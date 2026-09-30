@@ -18,6 +18,7 @@ const ROOT = path.resolve(__dirname, '..');
 const GIT_TS = path.join(ROOT, 'src', 'git', 'git.ts');
 const GRAPH_TS = path.join(ROOT, 'src', 'git', 'graph.ts');
 const VIRTUAL_JS = path.join(ROOT, 'media', 'virtual.js');
+const TREE_TS = path.join(ROOT, 'src', 'git', 'tree.ts');
 
 const MUTATIONS = [
   {
@@ -82,6 +83,20 @@ const MUTATIONS = [
     file: VIRTUAL_JS,
     from: 'const end = clamp(Math.ceil(bottom / rowHeight) + overscan, start, total);',
     to: 'const end = Math.max(Math.ceil(bottom / rowHeight) + overscan, start);',
+  },
+  {
+    // Treating "." as a prefix matches no listed path, so a discard from the
+    // root row silently does nothing.
+    label: 'the repository root treated as a folder prefix',
+    file: TREE_TS,
+    from: '  if (folder === ROOT) {\n    return true;\n  }',
+    to: '  if (false) {\n    return true;\n  }',
+  },
+  {
+    label: 'a folder matched as a bare prefix (src claims src2)',
+    file: TREE_TS,
+    from: "  return filePath.startsWith(folder.endsWith('/') ? folder : `${folder}/`);",
+    to: '  return filePath.startsWith(folder);',
   },
 ];
 

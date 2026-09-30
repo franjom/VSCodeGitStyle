@@ -2,6 +2,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { readFileDiff } from '../git/diff';
 import { Git } from '../git/git';
+import { ROOT } from '../git/tree';
 import { Diagnostics } from '../diagnostics';
 import {
   CommitOp,
@@ -103,10 +104,15 @@ export class RepositoryWindow {
     file?: string,
     diagnostics?: Diagnostics
   ): void {
+    // The sidebar's root row asks for the whole repository as ".", git's own
+    // spelling of it, and that means widening a window that was scoped to one
+    // file. No argument at all is the palette command, which only brings the
+    // window forward and leaves whatever it was showing alone.
+    const scope = file === ROOT ? undefined : file;
     if (RepositoryWindow.current) {
       RepositoryWindow.current.panel.reveal();
       if (file) {
-        void RepositoryWindow.current.showFile(file);
+        void RepositoryWindow.current.showFile(scope);
       }
       return;
     }
@@ -115,11 +121,11 @@ export class RepositoryWindow {
       void vscode.window.showWarningMessage('No Git repository is open.');
       return;
     }
-    RepositoryWindow.current = new RepositoryWindow(extensionUri, gitApi, git, root, file, diagnostics);
+    RepositoryWindow.current = new RepositoryWindow(extensionUri, gitApi, git, root, scope, diagnostics);
   }
 
-  /** Re-scopes an open window to one file's history. */
-  private async showFile(file: string): Promise<void> {
+  /** Re-scopes an open window to one file's history, or back to the whole repository. */
+  private async showFile(file: string | undefined): Promise<void> {
     this.file = file;
     this.limit = pageSize();
     await this.load();

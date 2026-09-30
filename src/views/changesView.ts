@@ -3,7 +3,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { countChanges, Git, RepoSnapshot } from '../git/git';
 import { ApiRepository, GitApi } from '../gitExtension';
-import { buildTree, TreeNode } from '../git/tree';
+import { buildTree, isUnder, ROOT, TreeNode } from '../git/tree';
 
 /** VS Code's own git blame toggle, present from 1.96. */
 const BLAME_COMMAND = 'git.blame.toggleEditorDecoration';
@@ -527,8 +527,7 @@ export class ChangesViewProvider implements vscode.WebviewViewProvider {
    */
   private async discardFolder(root: string, folder: string): Promise<void> {
     const snapshot = await this.git.snapshot(root, false);
-    const prefix = folder.endsWith('/') ? folder : `${folder}/`;
-    const inFolder = (change: { path: string }) => change.path.startsWith(prefix);
+    const inFolder = (change: { path: string }) => isUnder(change.path, folder);
 
     const unstaged = snapshot.unstaged.filter(inFolder);
     const staged = snapshot.staged.filter(inFolder);
@@ -542,7 +541,9 @@ export class ChangesViewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    const lines = [`Discard all changes in ${folder}?`, ''];
+    // The root row is asked for as ".", which would read as a typo in a prompt.
+    const where = folder === ROOT ? 'the repository' : folder;
+    const lines = [`Discard all changes in ${where}?`, ''];
     lines.push(`${affected.size} file(s) affected.`);
     if (untracked.length) {
       lines.push(`${untracked.length} untracked file(s) will be deleted.`);

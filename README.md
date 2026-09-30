@@ -61,7 +61,7 @@ theme tokens so it follows the active colour theme.
 | In-progress operation banner | done, naming what is being merged, with an Abort link |
 | Per-file stage / unstage / discard / open changes | done, on hover and in the context menu |
 | Per-file context menu | done, matching Visual Studio's: Open, Stage/Unstage, Undo Changes, View History, Compare with Unmodified, Blame (Annotate), Reveal in File Explorer, Ignore and Untrack item. "Review changes with Copilot" is deliberately left out |
-| Per-folder context menu | done: the file menu applied to everything beneath the folder, as one git command with the directory as pathspec. Open, Compare and Blame are shown disabled with the reason rather than dropped, which is what VS does. Conflict folders get no menu, because a conflict is resolved a file at a time |
+| Per-folder context menu | done: the file menu applied to everything beneath the folder, as one git command with the directory as pathspec. Open, Compare and Blame are shown disabled with the reason rather than dropped, which is what VS does. Conflict folders get no menu, because a conflict is resolved a file at a time. The repository root row carries the same menu for the whole tree, as it does in VS; its View History opens the repository's history rather than one path's |
 | Change-type colouring per file | done, using the theme's `gitDecoration` colours |
 | `Stashes (n)` list with `{ n } On <branch>: <message>` | done |
 | Stash apply / pop / drop, `Drop All` | done |
