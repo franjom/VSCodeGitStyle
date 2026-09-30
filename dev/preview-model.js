@@ -3,14 +3,14 @@
 window.__VSG_MODEL = {
  "repos": [
   {
-   "root": "C:/Users/franj/AppData/Local/Temp/claude/d--DungeonKeeperRemake-Codex/9e327231-9d19-4800-a917-eac06d5154ae/scratchpad/demo",
+   "root": "C:/Users/franj/source/demo",
    "name": "MedicusNet"
   }
  ],
  "separator": "\\",
  "canGenerateMessage": true,
  "active": {
-  "root": "C:/Users/franj/AppData/Local/Temp/claude/d--DungeonKeeperRemake-Codex/9e327231-9d19-4800-a917-eac06d5154ae/scratchpad/demo",
+  "root": "C:/Users/franj/source/demo",
   "name": "demo",
   "branch": "Test_alpha",
   "detached": false,

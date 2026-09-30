@@ -386,12 +386,12 @@ collisions**.
 
 | repository | commits | lanes | refs | notes |
 | --- | --- | --- | --- | --- |
-| `MedicusClientv2` | 459 | 4 | 33 | 45 merges, 23 tags, 7 remote branches, self-hosted GitLab |
-| `DungeonKeeperRemake` | 432 | 3 | 3 | no remote |
-| `DungeonKeeperRemake-Codex` | 410 | 3 | 3 | worktree of the above |
+| a client application | 459 | 4 | 33 | 45 merges, 23 tags, 7 remote branches, self-hosted GitLab |
+| a game project | 432 | 3 | 3 | no remote |
+| a worktree of the game project | 410 | 3 | 3 | |
 | scratch repo | 10 | 3 | 11 | see below |
 
-Read timings on `MedicusClientv2`: `readRefs` 46 ms, `readGraph` over all 459
+Read timings on the client application: `readRefs` 46 ms, `readGraph` over all 459
 commits 143 ms, `git status` snapshot 148 ms, tree build 0.2 ms.
 
 The scratch repository was built to cover what the real ones do not: every

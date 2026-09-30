@@ -83,7 +83,7 @@
           "default": 200,
           "minimum": 20,
           "maximum": 2000,
-          "description": "How many commits the Git Repository window loads per page. Rows are not virtualized, so very large pages slow the window down."
+          "description": "How many commits the Git Repository window loads per page. Only the rows on screen are drawn, so this limits how much git is asked for, not how much the window can show."
         },
         "vsGitStyle.reviewProvider": {
           "type": "string",
