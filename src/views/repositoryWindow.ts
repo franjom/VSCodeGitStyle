@@ -2,6 +2,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { readFileDiff } from '../git/diff';
 import { Git } from '../git/git';
+import { ChangePair, comparePairs, Side } from '../git/compare';
 import { refNameProblem, RefKind } from '../git/refNames';
 import { ROOT } from '../git/tree';
 import { Diagnostics } from '../diagnostics';
@@ -695,7 +696,8 @@ export class RepositoryWindow {
   }
 
   /**
-   * The changed files between two branches, opened as ordinary editor diffs.
+   * The changed files between two branches, all at once in VS Code's changes
+   * editor.
    *
    * Two dots rather than three: Visual Studio's comparison is what the two
    * branches look like side by side now, not what one has done since they last
@@ -726,28 +728,7 @@ export class RepositoryWindow {
       return;
     }
 
-    const picked = await vscode.window.showQuickPick(
-      files.map((file) => ({
-        label: file.path.split('/').pop() ?? file.path,
-        description: file.status,
-        detail: file.path,
-        file,
-      })),
-      {
-        title: `${files.length} file(s) differ between '${current}' and '${ref}'`,
-        placeHolder: 'Pick a file to see the difference',
-        matchOnDetail: true,
-      }
-    );
-    if (!picked) {
-      return;
-    }
-    await vscode.commands.executeCommand(
-      'vscode.diff',
-      this.blobUri(from, picked.file.origPath ?? picked.file.path),
-      this.blobUri(to, picked.file.path),
-      `${picked.label} (${current} ↔ ${ref})`
-    );
+    await this.openChanges(`${current} ↔ ${ref}`, comparePairs(files, from, to));
   }
 
   /** Adds or removes a branch from the set the graph is drawing. */
@@ -920,7 +901,8 @@ export class RepositoryWindow {
   }
 
   /**
-   * Compares this commit with another the user picks, file by file.
+   * Compares this commit with another the user picks, every changed file at
+   * once in the changes editor.
    *
    * Visual Studio greys its own entry until two rows are selected; the history
    * here has no multi-select, so the second commit is asked for instead, which
@@ -960,26 +942,32 @@ export class RepositoryWindow {
       void vscode.window.showInformationMessage('Those two commits have the same content.');
       return;
     }
-    const file = await vscode.window.showQuickPick(
-      files.map((entry) => ({
-        label: entry.path.split('/').pop() ?? entry.path,
-        description: entry.status,
-        detail: entry.path,
-        entry,
-      })),
-      {
-        title: `${files.length} file(s) differ between ${picked.description} and ${target.shortHash}`,
-        matchOnDetail: true,
-      }
+    await this.openChanges(
+      `${picked.description} ↔ ${target.shortHash}`,
+      comparePairs(files, picked.hash, target.hash)
     );
-    if (!file) {
-      return;
-    }
+  }
+
+  /**
+   * Opens every changed file at once in VS Code's multi-file changes editor,
+   * which is how Visual Studio presents a comparison: the whole set, scrolled
+   * through, rather than a list to pick from one file at a time. It renders
+   * only the files in view, so a large comparison costs what is on screen.
+   *
+   * Each entry's first URI names the file in the working tree: the editor
+   * labels the entry and picks its icon from it, while the two blob URIs are
+   * what is compared.
+   */
+  private async openChanges(title: string, pairs: ChangePair[]): Promise<void> {
+    const side = (s: Side | undefined) => (s ? this.blobUri(s.rev, s.path) : undefined);
     await vscode.commands.executeCommand(
-      'vscode.diff',
-      this.blobUri(picked.hash, file.entry.origPath ?? file.entry.path),
-      this.blobUri(target.hash, file.entry.path),
-      `${file.label} (${picked.description} ↔ ${target.shortHash})`
+      'vscode.changes',
+      title,
+      pairs.map((pair) => [
+        vscode.Uri.file(path.join(this.root, pair.path)),
+        side(pair.left),
+        side(pair.right),
+      ])
     );
   }
 

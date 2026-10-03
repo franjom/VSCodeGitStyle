@@ -23,6 +23,7 @@ const WORKTREES_TS = path.join(ROOT, 'src', 'git', 'worktrees.ts');
 const DIFFVIEW_JS = path.join(ROOT, 'media', 'diffview.js');
 const CHANGESVIEW_JS = path.join(ROOT, 'media', 'changesview.js');
 const REFNAMES_TS = path.join(ROOT, 'src', 'git', 'refNames.ts');
+const COMPARE_TS = path.join(ROOT, 'src', 'git', 'compare.ts');
 
 const MUTATIONS = [
   {
@@ -101,6 +102,26 @@ const MUTATIONS = [
     file: TREE_TS,
     from: '  if (folder === ROOT) {\n    return true;\n  }',
     to: '  if (false) {\n    return true;\n  }',
+  },
+  {
+    // An added file shown against an empty document, labelled modified.
+    label: 'an added file given a left side',
+    file: COMPARE_TS,
+    from: "    left: file.status === 'A' ? undefined : { rev: from, path: file.origPath ?? file.path },",
+    to: '    left: { rev: from, path: file.origPath ?? file.path },',
+  },
+  {
+    label: 'a deleted file given a right side',
+    file: COMPARE_TS,
+    from: "    right: file.status === 'D' ? undefined : { rev: to, path: file.path },",
+    to: '    right: { rev: to, path: file.path },',
+  },
+  {
+    // The old side of a rename read at its new path, where it did not exist.
+    label: 'a rename compared at its new path on both sides',
+    file: COMPARE_TS,
+    from: "{ rev: from, path: file.origPath ?? file.path }",
+    to: '{ rev: from, path: file.path }',
   },
   {
     // "@{-1}" passes on its exit code, and a branch named after the previous
