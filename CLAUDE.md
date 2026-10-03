@@ -35,6 +35,7 @@ src/
     graph.ts      reads the log, lays out the lanes, reads commit details
     diff.ts       reads one file's changes as aligned side-by-side rows
     tree.ts       folder tree with single-child chain compression
+    worktrees.ts  linked worktrees and their changes, for the branch pane
   views/        vscode integration. Not unit-testable; keep it thin.
     changesView.ts       the Git Changes WebviewViewProvider
     repositoryWindow.ts  the Git Repository WebviewPanel

@@ -122,7 +122,33 @@
     }
     model.graph.extras = model.graph.extras || [];
     model.menus = menusFor(model.refs);
+    model.worktrees = model.worktrees || worktrees();
   })();
+
+  /*
+   * Two worktrees of the shape src/git/worktrees.ts produces: this one clean,
+   * and a linked one holding a file of every letter plus enough untracked noise
+   * to reach the cap, so the pane is drawn at its worst rather than its usual.
+   */
+  function worktrees() {
+    var files = [
+      { path: 'Mcs.Skzz.Api/Controllers/Api/WidgetSettings/WidgetSettingsController.cs', status: 'M' },
+      { path: 'Mcs.Skzz.Api/Controllers/Api/WidgetSettings/WidgetSettingsModel.cs', status: '!' },
+      { path: 'Mcs.Skzz.Data/Repositories/WidgetSettingRepository.cs', status: 'A' },
+      { path: 'Mcs.Skzz.Common/Helpers/DateHelper.cs', status: 'D' },
+      { path: 'Mcs.Medicus.Spa/src/styles/theme.scss', origPath: 'Mcs.Medicus.Spa/src/theme.scss', status: 'R' },
+      { path: 'notes.txt', status: 'U' }
+    ];
+    for (var i = files.length; i < 200; i++) {
+      files.push({ path: 'Mcs.Skzz.Data/Generated/File' + ('000' + i).slice(-4) + '.cs', status: 'U' });
+    }
+    return [
+      { path: 'D:/MedicusNet', name: 'MedicusNet', branch: 'Test_alpha', current: true,
+        files: [], total: 0, note: 'No changes.' },
+      { path: 'D:/MedicusNet-review', name: 'MedicusNet-review', branch: 'NSKZZ-RC', current: false,
+        files: files, total: 523 }
+    ];
+  }
 
   let stored = {};
   window.acquireVsCodeApi = function () {
@@ -131,6 +157,9 @@
       setState: function (next) { stored = next; },
       postMessage: function (message) {
         console.log('[preview] postMessage', message);
+        if (message.type === 'openWorktreeChange') {
+          window.__VSG_OPENED = message;
+        }
         if (message.type === 'ready' || message.type === 'refresh') {
           window.dispatchEvent(
             new MessageEvent('message', { data: { type: 'model', model: window.__VSG_REPO_MODEL } })

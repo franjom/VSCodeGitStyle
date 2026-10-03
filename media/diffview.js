@@ -157,8 +157,13 @@
   /**
    * Hides the rows under a collapsed directory. Kept apart from the tree build
    * so opening and closing a folder never has to walk the file list again.
+   *
+   * `prefix` scopes the keys when one set of closed keys serves several trees,
+   * as the branch pane's does for every worktree: the same folder in two
+   * worktrees is two rows, and shutting one must not shut the other.
    */
-  function visibleTreeRows(rows, closed) {
+  function visibleTreeRows(rows, closed, prefix) {
+    const scope = prefix || '';
     const out = [];
     let hiddenBelow = -1;
     for (const row of rows) {
@@ -169,7 +174,7 @@
         hiddenBelow = -1;
       }
       out.push(row);
-      if (row.kind === 'dir' && closed.has(row.key)) {
+      if (row.kind === 'dir' && closed.has(scope + row.key)) {
         hiddenBelow = row.depth;
       }
     }

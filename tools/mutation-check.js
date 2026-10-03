@@ -19,6 +19,8 @@ const GIT_TS = path.join(ROOT, 'src', 'git', 'git.ts');
 const GRAPH_TS = path.join(ROOT, 'src', 'git', 'graph.ts');
 const VIRTUAL_JS = path.join(ROOT, 'media', 'virtual.js');
 const TREE_TS = path.join(ROOT, 'src', 'git', 'tree.ts');
+const WORKTREES_TS = path.join(ROOT, 'src', 'git', 'worktrees.ts');
+const DIFFVIEW_JS = path.join(ROOT, 'media', 'diffview.js');
 
 const MUTATIONS = [
   {
@@ -103,6 +105,32 @@ const MUTATIONS = [
     file: TREE_TS,
     from: "  return filePath.startsWith(folder.endsWith('/') ? folder : `${folder}/`);",
     to: '  return filePath.startsWith(folder);',
+  },
+  {
+    // The branch pane is not windowed; this is the only thing bounding it.
+    label: "a worktree's file list not capped",
+    file: WORKTREES_TS,
+    from: '  return { files: all.slice(0, max), total: all.length };',
+    to: '  return { files: all, total: all.length };',
+  },
+  {
+    label: 'the cap keeps files by path alone, dropping conflicts',
+    file: WORKTREES_TS,
+    from: "    const conflictFirst = Number(b.status === '!') - Number(a.status === '!');",
+    to: '    const conflictFirst = 0;',
+  },
+  {
+    // The row would open a diff against a file that is not there.
+    label: 'a file deleted from disk takes its staged letter',
+    file: WORKTREES_TS,
+    from: "    if (change.status === 'deleted' && !byPath.has(change.path)) {",
+    to: '    if (false) {',
+  },
+  {
+    label: 'one shut folder shuts the same folder in every worktree',
+    file: DIFFVIEW_JS,
+    from: "      if (row.kind === 'dir' && closed.has(scope + row.key)) {",
+    to: "      if (row.kind === 'dir' && closed.has(row.key)) {",
   },
 ];
 

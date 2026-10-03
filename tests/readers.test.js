@@ -9,9 +9,12 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const { countChanges, Git } = require('../out/git/git.js');
 const { readGraph, readRefs, readCommitDetails, readReviewInfo } = require('../out/git/graph.js');
+const { readWorktrees } = require('../out/git/worktrees.js');
 const { TestRepo, assertLaneContinuity, assertLanesInRange } = require('./helpers.js');
 
 const git = new Git('git');
@@ -384,6 +387,66 @@ test('readRefs classifies heads, remotes and tags, and marks the current branch'
   assert.equal(byShort.get('origin/main').kind, 'remote');
   assert.equal(byShort.get('v1.0').kind, 'tag');
   assert.ok(!refs.some((r) => r.short.endsWith('/HEAD')), 'origin/HEAD is not a branch');
+});
+
+/** A repository with one linked worktree beside it, on its own branch. */
+function repoWithWorktree(t) {
+  const repo = new TestRepo();
+  const linked = repo.dir + '-linked';
+  t.after(() => {
+    fs.rmSync(linked, { recursive: true, force: true });
+    repo.dispose();
+  });
+  repo.write('src/Shared.cs', 'one\n');
+  repo.commit('Initial');
+  repo.git(['worktree', 'add', '-q', '-b', 'feature', linked]);
+  return { repo, linked };
+}
+
+test('a repository with no linked worktree lists none', async (t) => {
+  const repo = new TestRepo();
+  t.after(() => repo.dispose());
+  repo.write('a.txt', 'a\n');
+  repo.commit('Initial');
+  repo.write('a.txt', 'changed\n');
+
+  assert.deepEqual(await readWorktrees(git, repo.dir), []);
+});
+
+test('each worktree reports its own branch and only its own changes', async (t) => {
+  const { repo, linked } = repoWithWorktree(t);
+  fs.writeFileSync(path.join(linked, 'src', 'Shared.cs'), 'edited in the worktree\n');
+  fs.writeFileSync(path.join(linked, 'New.cs'), 'new\n');
+
+  const [main, other] = await readWorktrees(git, repo.dir);
+
+  assert.equal(main.branch, 'main');
+  assert.equal(main.current, true);
+  assert.equal(main.total, 0);
+  assert.equal(main.note, 'No changes.');
+
+  assert.equal(other.branch, 'feature');
+  assert.equal(other.current, false);
+  assert.equal(other.name, path.basename(linked));
+  assert.deepEqual(
+    other.files.map((f) => f.path + ' ' + f.status),
+    ['New.cs U', 'src/Shared.cs M']
+  );
+});
+
+test('the window opened on a linked worktree marks that one as current', async (t) => {
+  const { linked } = repoWithWorktree(t);
+  const worktrees = await readWorktrees(git, linked);
+  assert.deepEqual(worktrees.map((w) => w.current), [false, true]);
+});
+
+test('a worktree whose directory is gone is listed as missing, not as a failure', async (t) => {
+  const { repo, linked } = repoWithWorktree(t);
+  fs.rmSync(linked, { recursive: true, force: true });
+
+  const [, gone] = await readWorktrees(git, repo.dir);
+  assert.equal(gone.note, 'The directory is missing.');
+  assert.deepEqual(gone.files, []);
 });
 
 test('commit details cover a merge, an ordinary commit and the root', async (t) => {

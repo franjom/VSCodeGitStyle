@@ -708,6 +708,58 @@ function inspectBranchRow() {
     });
 }
 
+/** The worktrees in the branch pane: their rows, the cap, a click and a fold. */
+function inspectWorktrees() {
+  const worktrees = [...document.querySelectorAll('.left .tree-row.worktree')];
+  const files = [...document.querySelectorAll('.left .tree-row.change-file')];
+  const notes = [...document.querySelectorAll('.left .empty')].map(function (n) {
+    return n.textContent;
+  });
+  const byLetter = function (letter) {
+    return files.find(function (row) {
+      return row.querySelector('.suffix').textContent === letter;
+    });
+  };
+  const colourOf = function (row) {
+    return row ? getComputedStyle(row.querySelector('.suffix')).color : null;
+  };
+  const linkedCount = worktrees[1] && worktrees[1].querySelector('.count');
+
+  const result = {
+    worktrees: worktrees.length,
+    files: files.length,
+    clean: notes.indexOf('No changes.') !== -1,
+    capped: notes.indexOf('323 more not listed.') !== -1,
+    count: linkedCount ? linkedCount.textContent : null,
+    conflictColour: colourOf(byLetter('!')),
+    modifiedColour: colourOf(byLetter('M')),
+  };
+
+  window.__VSG_OPENED = null;
+  const renamed = byLetter('R');
+  if (renamed) {
+    renamed.click();
+  }
+  result.opened = window.__VSG_OPENED;
+
+  if (worktrees[1]) {
+    worktrees[1].click();
+  }
+  return settle()
+    .then(function () {
+      result.filesAfterFold = document.querySelectorAll('.left .tree-row.change-file').length;
+      // Open it again, so the checks after this one see the page as it was.
+      const again = document.querySelectorAll('.left .tree-row.worktree')[1];
+      if (again) {
+        again.click();
+      }
+      return settle();
+    })
+    .then(function () {
+      return result;
+    });
+}
+
 /** The hover card, the commit menu, and folding the refs pane away. */
 function inspectCommitRowFeatures() {
   const row = document.querySelector('.rows .commit-row');
@@ -1272,6 +1324,38 @@ async function main() {
       'and clicking it does nothing, rather than looking like it did',
       branch.stillOpenAfterDisabledClick,
       String(branch.stillOpenAfterDisabledClick)
+    );
+
+    const wt = await evaluate(cdp, inspectWorktrees);
+    check('every worktree gets a row of its own', wt.worktrees === 2, wt.worktrees + ' worktree rows');
+    check(
+      "a worktree's changes reach the DOM up to the cap, and what it left out is said",
+      wt.files === 200 && wt.capped,
+      wt.files + ' file rows, capped note ' + wt.capped
+    );
+    check(
+      'the badge counts every change, not only the ones listed',
+      wt.count === '523',
+      'badge ' + wt.count
+    );
+    check('a clean worktree says so', wt.clean, String(wt.clean));
+    check(
+      "a conflict's letter is coloured apart from a modification's",
+      wt.conflictColour && wt.conflictColour !== wt.modifiedColour,
+      wt.conflictColour + ' vs ' + wt.modifiedColour
+    );
+    check(
+      'clicking a file asks for its diff, naming the worktree and where it was renamed from',
+      !!wt.opened &&
+        wt.opened.worktree === 'D:/MedicusNet-review' &&
+        wt.opened.status === 'R' &&
+        wt.opened.origPath === 'Mcs.Medicus.Spa/src/theme.scss',
+      JSON.stringify(wt.opened)
+    );
+    check(
+      'folding a worktree takes its files out of the DOM',
+      wt.filesAfterFold === 0,
+      wt.filesAfterFold + ' file rows left'
     );
 
     const rowFeatures = await evaluate(cdp, inspectCommitRowFeatures);

@@ -212,7 +212,7 @@ export class Git {
     return { ahead: ahead ?? 0, behind: behind ?? 0 };
   }
 
-  private async status(root: string, includeIgnored: boolean): Promise<StatusLists> {
+  async status(root: string, includeIgnored: boolean): Promise<StatusLists> {
     const args = ['status', '--porcelain=v2', '-z', '--untracked-files=all'];
     if (includeIgnored) {
       args.push('--ignored=matching');

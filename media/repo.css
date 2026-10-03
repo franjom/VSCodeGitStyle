@@ -929,30 +929,39 @@ body.vscode-high-contrast-light {
 
 /* The status letter is the one thing in the row that carries colour, so the
    file name itself stays readable against the selection highlight. */
-.changes .tree-row .suffix {
+:is(.changes, .left) .tree-row.change-file .suffix {
   font-family: var(--vscode-editor-font-family, monospace);
   font-weight: 600;
 }
 
-.changes .tree-row.st-A .suffix {
+:is(.changes, .left) .tree-row.st-A .suffix {
   color: var(--vscode-gitDecoration-addedResourceForeground, #81b88b);
 }
 
-.changes .tree-row.st-M .suffix {
+:is(.changes, .left) .tree-row.st-M .suffix {
   color: var(--vscode-gitDecoration-modifiedResourceForeground, #e2c08d);
 }
 
-.changes .tree-row.st-D .suffix {
+:is(.changes, .left) .tree-row.st-D .suffix {
   color: var(--vscode-gitDecoration-deletedResourceForeground, #c74e39);
 }
 
-.changes .tree-row.st-R .suffix,
-.changes .tree-row.st-C .suffix {
+:is(.changes, .left) .tree-row.st-R .suffix,
+:is(.changes, .left) .tree-row.st-C .suffix {
   color: var(--vscode-gitDecoration-renamedResourceForeground, #73c991);
 }
 
-.changes .tree-row.st-T .suffix {
+:is(.changes, .left) .tree-row.st-T .suffix {
   color: var(--vsg-lane-2);
+}
+
+/* The two letters only a worktree's uncommitted changes can carry. */
+.left .tree-row.st-U .suffix {
+  color: var(--vscode-gitDecoration-untrackedResourceForeground, #81b88b);
+}
+
+.left .tree-row.st-\! .suffix {
+  color: var(--vscode-gitDecoration-conflictingResourceForeground, #e4676b);
 }
 
 .changes .tree-row.change-file .icon {
@@ -978,6 +987,19 @@ body.vscode-high-contrast-light {
 
 .st-T {
   color: var(--vsg-lane-2);
+}
+
+/* ------------------------------------------------------------- worktrees */
+
+.tree-row.worktree .count {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 0 6px;
+  border-radius: 9px;
+  font-size: 11px;
+  line-height: 16px;
+  background: var(--vscode-badge-background, #0078d4);
+  color: var(--vscode-badge-foreground, #ffffff);
 }
 
 /* ------------------------------------------------------------ eye toggle */

@@ -21,7 +21,8 @@ import {
   MenuEntry,
   OpContext,
 } from '../git/branchOps';
-import { GitApi } from '../gitExtension';
+import { ApiRepository, GitApi } from '../gitExtension';
+import { readWorktrees, samePath, Worktree } from '../git/worktrees';
 import { BLOB_SCHEME, COMMIT_SCHEME } from './contentProviders';
 import {
   GraphModel,
@@ -36,6 +37,8 @@ import {
 } from '../git/graph';
 
 const DEFAULT_PAGE_SIZE = 200;
+
+const IGNORE_CASE = process.platform === 'win32';
 
 function pageSize(): number {
   return vscode.workspace
@@ -58,6 +61,8 @@ interface WindowModel {
    * few tens of kilobytes beside a graph already far larger.
    */
   menus: Record<string, MenuEntry[]>;
+  /** Empty unless the repository has a linked worktree; see worktrees.ts. */
+  worktrees: Worktree[];
 }
 
 type Inbound =
@@ -83,7 +88,8 @@ type Inbound =
   | { type: 'diag'; label: string; detail?: Record<string, unknown>; failed?: boolean }
   | { type: 'branchOp'; op: BranchOp; ref: string }
   | { type: 'commitMenu'; hash: string }
-  | { type: 'commitOp'; op: CommitOp; hash: string };
+  | { type: 'commitOp'; op: CommitOp; hash: string }
+  | { type: 'openWorktreeChange'; worktree: string; path: string; origPath?: string; status: string };
 
 /**
  * The Git Repository window: Visual Studio's full-screen commit graph, as a
@@ -145,6 +151,8 @@ export class RepositoryWindow {
   private file: string | undefined;
   private limit = pageSize();
   private loadTimer: NodeJS.Timeout | undefined;
+  /** As last sent; what a click on a worktree's file is checked against. */
+  private worktrees: Worktree[] = [];
 
   private constructor(
     private readonly extensionUri: vscode.Uri,
@@ -181,6 +189,23 @@ export class RepositoryWindow {
     if (repository) {
       this.disposables.push(repository.state.onDidChange(() => this.scheduleLoad()));
     }
+    // The other worktrees' changes are drawn in the branch pane too, so an
+    // edit in one VS Code has open as its own repository is a reason to reload.
+    // One it has not opened sends nothing; that is caught up on the next load.
+    const watch = (other: ApiRepository) => {
+      if (other === repository) {
+        return;
+      }
+      this.disposables.push(
+        other.state.onDidChange(() => {
+          if (this.worktrees.some((w) => samePath(w.path, other.rootUri.fsPath, IGNORE_CASE))) {
+            this.scheduleLoad();
+          }
+        })
+      );
+    };
+    gitApi.repositories.forEach(watch);
+    this.disposables.push(gitApi.onDidOpenRepository(watch));
     this.disposables.push(
       this.panel.onDidChangeViewState(() => {
         if (this.panel.visible) {
@@ -304,6 +329,10 @@ export class RepositoryWindow {
         case 'commitOp':
           await this.commitOp(message);
           return;
+
+        case 'openWorktreeChange':
+          await this.openWorktreeChange(message);
+          return;
       }
     } catch (err) {
       void vscode.window.showErrorMessage(
@@ -320,16 +349,22 @@ export class RepositoryWindow {
       this.scope = refs.find((r) => r.current)?.short ?? 'HEAD';
     }
     this.extras = this.extras.filter((ref) => refs.some((entry) => entry.short === ref));
-    const graph = await readGraph(
-      this.git,
-      this.root,
-      this.scope,
-      this.limit,
-      this.file,
-      this.extras,
-      this.outgoingOnly
-    );
+    const [graph, worktrees] = await Promise.all([
+      readGraph(
+        this.git,
+        this.root,
+        this.scope,
+        this.limit,
+        this.file,
+        this.extras,
+        this.outgoingOnly
+      ),
+      // The worktrees are a side panel; a git too old for `worktree list`
+      // should cost the panel, not the graph.
+      readWorktrees(this.git, this.root, IGNORE_CASE).catch((): Worktree[] => []),
+    ]);
     this.lastGraph = graph;
+    this.worktrees = worktrees;
     this.currentBranch = refs.find((r) => r.current)?.short;
     const configured = vscode.workspace
       .getConfiguration('vsGitStyle')
@@ -345,6 +380,7 @@ export class RepositoryWindow {
       ),
       graph,
       review,
+      worktrees,
     };
     this.post({ type: 'model', model });
     this.post({ type: 'busy', busy: false });
@@ -914,14 +950,53 @@ export class RepositoryWindow {
     );
   }
 
-  private blobUri(rev: string, filePath: string): vscode.Uri {
+  private blobUri(rev: string, filePath: string, root = this.root): vscode.Uri {
     // The published path keeps the file name so the editor picks a language,
     // and the revision prefix keeps the two sides of a diff distinct.
     return vscode.Uri.from({
       scheme: BLOB_SCHEME,
       path: `/${rev.replace(/[^\w.-]/g, '_')}/${filePath}`,
-      query: new URLSearchParams({ root: this.root, rev, path: filePath }).toString(),
+      query: new URLSearchParams({ root, rev, path: filePath }).toString(),
     });
+  }
+
+  /**
+   * A worktree's change, as HEAD against the file on disk. `git.openChange` is
+   * not used, as Git Changes uses it, because it only works for a repository
+   * VS Code has opened - and a worktree outside the workspace is exactly the
+   * one this pane exists to show.
+   */
+  private async openWorktreeChange(
+    message: Extract<Inbound, { type: 'openWorktreeChange' }>
+  ): Promise<void> {
+    // The path comes back from the webview; only open under a worktree git
+    // itself reported.
+    const worktree = this.worktrees.find((w) => w.path === message.worktree);
+    if (!worktree) {
+      return;
+    }
+    const onDisk = vscode.Uri.file(path.join(worktree.path, message.path));
+    const name = message.path.split('/').pop() ?? message.path;
+
+    if (message.status === 'D') {
+      const document = await vscode.workspace.openTextDocument(
+        this.blobUri('HEAD', message.path, worktree.path)
+      );
+      await vscode.window.showTextDocument(document, { preview: true });
+      return;
+    }
+    // Nothing at HEAD to compare an untracked file with, and a conflicted one
+    // is better met with its markers and VS Code's merge actions than diffed.
+    if (message.status === 'U' || message.status === '!') {
+      await vscode.window.showTextDocument(onDisk, { preview: true });
+      return;
+    }
+    await vscode.commands.executeCommand(
+      'vscode.diff',
+      this.blobUri('HEAD', message.origPath ?? message.path, worktree.path),
+      onDisk,
+      `${name} (${worktree.name})`
+    );
   }
 
   private async openFileDiff(

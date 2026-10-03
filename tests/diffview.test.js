@@ -169,3 +169,17 @@ test('a closed folder inside an open one hides only its own files', () => {
     ['a', 'b', 'top.ts']
   );
 });
+
+test('a folder shut in one worktree stays open in another', () => {
+  const rows = buildFileTree([{ path: 'src/a.ts', status: 'M' }]);
+  const shutInFirst = new Set(['wt:D:/one' + rows[0].key]);
+
+  assert.deepEqual(
+    visibleTreeRows(rows, shutInFirst, 'wt:D:/one').map((r) => r.label),
+    ['src']
+  );
+  assert.deepEqual(
+    visibleTreeRows(rows, shutInFirst, 'wt:D:/two').map((r) => r.label),
+    ['src', 'a.ts']
+  );
+});

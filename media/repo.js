@@ -566,6 +566,133 @@
     }
   }
 
+  // Built once per model, not per render: the pane is redrawn for every filter
+  // keystroke and folder toggle, and the file list has not changed for either.
+  const worktreeTrees = new WeakMap();
+
+  function worktreeTree(worktree) {
+    let rows = worktreeTrees.get(worktree);
+    if (!rows) {
+      rows = diffView.buildFileTree(worktree.files);
+      worktreeTrees.set(worktree, rows);
+    }
+    return rows;
+  }
+
+  /** An italic line in the tree, indented to sit where a row's label would. */
+  function treeNote(depth, text) {
+    const note = el('div', 'empty', text);
+    note.style.paddingLeft = 2 + depth * 14 + 38 + 'px';
+    return note;
+  }
+
+  /**
+   * Each worktree's uncommitted changes, beside the branches they share. Not in
+   * Visual Studio - see src/git/worktrees.ts for why it is here at all, and for
+   * the cap that keeps this unwindowed pane bounded.
+   */
+  function renderWorktrees(container) {
+    const worktrees = state.model.worktrees || [];
+    if (!worktrees.length) {
+      return;
+    }
+    const groupOpen = isOpen('worktrees');
+    const group = treeRow({
+      kind: 'group-node',
+      depth: 1,
+      open: groupOpen,
+      codicon: 'folder-library',
+      label: 'Worktrees',
+    });
+    group.addEventListener('click', function () {
+      toggleTree('worktrees');
+    });
+    container.appendChild(group);
+    if (!groupOpen) {
+      return;
+    }
+
+    for (const worktree of worktrees) {
+      const key = 'wt:' + worktree.path;
+      const open = isOpen(key);
+      const row = treeRow({
+        kind: 'worktree',
+        depth: 2,
+        open: open,
+        codicon: 'repo-forked',
+        label: worktree.name,
+        suffix: worktree.branch,
+        current: worktree.current,
+      });
+      row.title = worktree.path;
+      if (worktree.total) {
+        row.appendChild(el('span', 'count', String(worktree.total)));
+      }
+      row.addEventListener('click', function () {
+        toggleTree(key);
+      });
+      container.appendChild(row);
+      if (!open) {
+        continue;
+      }
+
+      if (worktree.note) {
+        container.appendChild(treeNote(3, worktree.note));
+      }
+      for (const item of diffView.visibleTreeRows(worktreeTree(worktree), state.treeClosed, key)) {
+        container.appendChild(
+          item.kind === 'dir' ? worktreeDirRow(key, item) : worktreeFileRow(worktree, item)
+        );
+      }
+      if (worktree.total > worktree.files.length) {
+        container.appendChild(
+          treeNote(3, worktree.total - worktree.files.length + ' more not listed.')
+        );
+      }
+    }
+  }
+
+  function worktreeDirRow(prefix, item) {
+    const key = prefix + item.key;
+    const open = isOpen(key);
+    const node = treeRow({
+      kind: 'group-node',
+      depth: 3 + item.depth,
+      open: open,
+      codicon: open ? 'folder-opened' : 'folder',
+      label: item.label,
+    });
+    node.addEventListener('click', function () {
+      toggleTree(key);
+    });
+    return node;
+  }
+
+  function worktreeFileRow(worktree, item) {
+    const file = item.file;
+    const node = treeRow({
+      kind: 'change-file',
+      depth: 3 + item.depth,
+      codicon: 'file',
+      label: item.label,
+      suffix: file.status,
+    });
+    node.classList.add('st-' + file.status);
+    node.title = file.origPath
+      ? file.path + String.fromCharCode(10) + '(was ' + file.origPath + ')'
+      : file.path;
+    node.addEventListener('click', function () {
+      post({
+        type: 'openWorktreeChange',
+        worktree: worktree.path,
+        path: file.path,
+        origPath: file.origPath,
+        status: file.status,
+      });
+    });
+    return node;
+  }
+
   function renderLeft() {
     const model = state.model;
     const pane = el('div', 'left');
@@ -684,6 +811,8 @@
           }
         }
       }
+
+      renderWorktrees(scroll);
     }
 
     // Placeholder: populating this needs the provider's API and a token.
