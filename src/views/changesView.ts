@@ -93,12 +93,25 @@ export class ChangesViewProvider implements vscode.WebviewViewProvider {
           this.activeRoot = undefined;
         }
         this.scheduleRefresh();
+      }),
+      // Settings are read as the view is built, so a change would otherwise
+      // wait for some unrelated event to redraw it and look as though it had
+      // not taken. confirmDiscard is read when it is asked, and needs nothing.
+      vscode.workspace.onDidChangeConfiguration((event) => {
+        if (event.affectsConfiguration('vsGitStyle.showIgnoredFiles')) {
+          this.scheduleRefresh(0);
+        }
       })
     );
 
     for (const repo of this.gitApi.repositories) {
       this.watch(repo);
     }
+  }
+
+  /** The repository the view is showing, which the Git Repository window follows. */
+  get selectedRoot(): string | undefined {
+    return this.activeRoot;
   }
 
   dispose(): void {

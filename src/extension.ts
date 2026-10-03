@@ -46,10 +46,17 @@ function start(context: vscode.ExtensionContext, api: GitApi): void {
     }),
     vscode.commands.registerCommand('vsGitStyle.refresh', () => provider.scheduleRefresh(0)),
     vscode.commands.registerCommand('vsGitStyle.openRepositoryWindow', () =>
-      RepositoryWindow.show(context.extensionUri, api, git, undefined, diagnostics)
+      RepositoryWindow.show(
+        context.extensionUri,
+        api,
+        git,
+        provider.selectedRoot,
+        undefined,
+        diagnostics
+      )
     ),
     vscode.commands.registerCommand('vsGitStyle.viewFileHistory', (file?: string) =>
-      RepositoryWindow.show(context.extensionUri, api, git, file, diagnostics)
+      RepositoryWindow.show(context.extensionUri, api, git, provider.selectedRoot, file, diagnostics)
     )
   );
 

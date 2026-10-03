@@ -22,6 +22,7 @@ const TREE_TS = path.join(ROOT, 'src', 'git', 'tree.ts');
 const WORKTREES_TS = path.join(ROOT, 'src', 'git', 'worktrees.ts');
 const DIFFVIEW_JS = path.join(ROOT, 'media', 'diffview.js');
 const CHANGESVIEW_JS = path.join(ROOT, 'media', 'changesview.js');
+const REFNAMES_TS = path.join(ROOT, 'src', 'git', 'refNames.ts');
 
 const MUTATIONS = [
   {
@@ -100,6 +101,27 @@ const MUTATIONS = [
     file: TREE_TS,
     from: '  if (folder === ROOT) {\n    return true;\n  }',
     to: '  if (false) {\n    return true;\n  }',
+  },
+  {
+    // "@{-1}" passes on its exit code, and a branch named after the previous
+    // one is made instead of the one typed.
+    label: 'a branch name git rewrote taken as accepted',
+    file: REFNAMES_TS,
+    from: "    if (kind === 'branch' && out.trim() !== name) {",
+    to: '    if (false) {',
+  },
+  {
+    // "-x" would reach `git tag` as an option.
+    label: 'a ref name starting with "-" let through',
+    file: REFNAMES_TS,
+    from: "  if (name === '@' || name.startsWith('-')) {",
+    to: "  if (name === '@') {",
+  },
+  {
+    label: 'a lone "@" let through as a branch name',
+    file: REFNAMES_TS,
+    from: "  if (name === '@' || name.startsWith('-')) {",
+    to: "  if (name.startsWith('-')) {",
   },
   {
     // A file at a revision decoded on the way through: any encoding but UTF-8

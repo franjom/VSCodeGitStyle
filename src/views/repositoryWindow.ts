@@ -2,6 +2,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { readFileDiff } from '../git/diff';
 import { Git } from '../git/git';
+import { refNameProblem, RefKind } from '../git/refNames';
 import { ROOT } from '../git/tree';
 import { Diagnostics } from '../diagnostics';
 import {
@@ -108,26 +109,36 @@ export class RepositoryWindow {
     extensionUri: vscode.Uri,
     gitApi: GitApi,
     git: Git,
+    selectedRoot: string | undefined,
     file?: string,
     diagnostics?: Diagnostics
   ): void {
+    // The repository Git Changes has selected, as Visual Studio's window shows
+    // the active one. The first repository VS Code found used to be taken
+    // instead, so with several open a file's history was looked for in
+    // whichever repository happened to be first - not the one holding it.
+    const root =
+      selectedRoot ?? RepositoryWindow.current?.root ?? gitApi.repositories[0]?.rootUri.fsPath;
+    if (!root) {
+      void vscode.window.showWarningMessage('No Git repository is open.');
+      return;
+    }
     // The sidebar's root row asks for the whole repository as ".", git's own
     // spelling of it, and that means widening a window that was scoped to one
     // file. No argument at all is the palette command, which only brings the
     // window forward and leaves whatever it was showing alone.
     const scope = file === ROOT ? undefined : file;
-    if (RepositoryWindow.current) {
-      RepositoryWindow.current.panel.reveal();
+    const current = RepositoryWindow.current;
+    if (current && current.root === root) {
+      current.panel.reveal();
       if (file) {
-        void RepositoryWindow.current.showFile(scope);
+        void current.showFile(scope);
       }
       return;
     }
-    const root = gitApi.repositories[0]?.rootUri.fsPath;
-    if (!root) {
-      void vscode.window.showWarningMessage('No Git repository is open.');
-      return;
-    }
+    // One window, as in Visual Studio: asked for another repository, it is
+    // replaced rather than joined by a second.
+    current?.panel.dispose();
     RepositoryWindow.current = new RepositoryWindow(extensionUri, gitApi, git, root, scope, diagnostics);
   }
 
@@ -230,6 +241,17 @@ export class RepositoryWindow {
         if (this.panel.visible) {
           this.scheduleLoad(100);
         }
+      }),
+      // Both are read as the window loads, so a change would otherwise wait for
+      // an unrelated reload to show. A new page size starts the history over
+      // at one page of the new size, as opening the window would.
+      vscode.workspace.onDidChangeConfiguration((event) => {
+        if (event.affectsConfiguration('vsGitStyle.graphPageSize')) {
+          this.limit = pageSize();
+          this.scheduleLoad(0);
+        } else if (event.affectsConfiguration('vsGitStyle.reviewProvider')) {
+          this.scheduleLoad(0);
+        }
       })
     );
   }
@@ -253,7 +275,11 @@ export class RepositoryWindow {
   }
 
   private dispose(): void {
-    RepositoryWindow.current = undefined;
+    // A window replaced by one for another repository is disposed after its
+    // successor is already current, and must not unset it.
+    if (RepositoryWindow.current === this) {
+      RepositoryWindow.current = undefined;
+    }
     if (this.loadTimer) {
       clearTimeout(this.loadTimer);
     }
@@ -649,21 +675,7 @@ export class RepositoryWindow {
       title: creating ? `New branch from '${ref}'` : `Rename '${ref}'`,
       prompt: creating ? 'Name for the new branch' : 'New name for the branch',
       value: creating ? '' : ref,
-      // git's own rules, checked here so the error arrives while it can still
-      // be corrected rather than as a failed command afterwards.
-      validateInput: (value) => {
-        const trimmed = value.trim();
-        if (!trimmed) {
-          return 'Enter a branch name.';
-        }
-        if (/[\s~^:?*[\\]/.test(trimmed) || trimmed.includes('..') || trimmed.endsWith('.lock')) {
-          return 'A branch name cannot contain spaces, "..", or any of ~ ^ : ? * [ \\';
-        }
-        if (trimmed.startsWith('-') || trimmed.startsWith('/') || trimmed.endsWith('/')) {
-          return 'A branch name cannot start with "-" or "/", or end with "/".';
-        }
-        return undefined;
-      },
+      validateInput: this.validRefName('branch'),
     });
     return name?.trim() || undefined;
   }
@@ -845,8 +857,7 @@ export class RepositoryWindow {
             ? `New branch at ${target.shortHash}`
             : `New tag at ${target.shortHash}`,
         prompt: target.subject,
-        validateInput: (value) =>
-          value.trim() ? undefined : 'Enter a name.',
+        validateInput: this.validRefName(message.op === 'newBranch' ? 'branch' : 'tag'),
       });
       if (!name?.trim()) {
         return;
@@ -1063,8 +1074,7 @@ export class RepositoryWindow {
     const name = await vscode.window.showInputBox({
       prompt: `New branch at ${hash.slice(0, 7)}`,
       placeHolder: 'branch name',
-      validateInput: (value) =>
-        value.trim() ? undefined : 'Enter a branch name.',
+      validateInput: this.validRefName('branch'),
     });
     if (!name) {
       return;
@@ -1074,6 +1084,14 @@ export class RepositoryWindow {
       `Created ${name.trim()} at ${hash.slice(0, 7)}.`
     );
     await this.load();
+  }
+
+  /**
+   * An input box's validateInput for a new branch or tag name, answered by
+   * git while the name can still be corrected; see refNameProblem.
+   */
+  private validRefName(kind: RefKind): (value: string) => Promise<string | undefined> {
+    return (value) => refNameProblem(this.git, this.root, kind, value);
   }
 
   // ------------------------------------------------------------------ html ---
