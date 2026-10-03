@@ -331,17 +331,18 @@ function collapseLocalGroup() {
 
 /**
  * Drags the details divider, selects a commit, then drags again. Selecting
- * replaces the whole details pane, and a splitter holding the old element goes
- * on resizing a detached node - the drag looks dead until the next full render.
+ * replaces the whole details column, and a splitter holding the old element
+ * goes on resizing a detached node - the drag looks dead until the next full
+ * render.
  *
- * The pane is docked across the bottom, so the divider moves vertically and
- * dragging it upwards is what makes the pane taller.
+ * The column sits at the right edge, so dragging the divider left is what
+ * makes it wider.
  */
 function dragSplitterAroundSelection() {
   const rows = document.querySelector('.rows');
-  const splitter = document.querySelector('.splitter.horizontal');
-  const heightNow = function () {
-    return Math.round(document.querySelector('.details').getBoundingClientRect().height);
+  const splitter = document.querySelector('.splitter.details-divider');
+  const widthNow = function () {
+    return Math.round(document.querySelector('.details').getBoundingClientRect().width);
   };
 
   const drag = function (by) {
@@ -352,28 +353,28 @@ function dragSplitterAroundSelection() {
       new MouseEvent('mousedown', { bubbles: true, clientX: x, clientY: y })
     );
     document.dispatchEvent(
-      new MouseEvent('mousemove', { bubbles: true, clientX: x, clientY: y - by })
+      new MouseEvent('mousemove', { bubbles: true, clientX: x - by, clientY: y })
     );
-    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: x, clientY: y - by }));
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: x - by, clientY: y }));
     return settle();
   };
 
-  const before = heightNow();
+  const before = widthNow();
   return drag(60).then(function () {
-    const afterFirst = heightNow();
-    // Select a commit, which rebuilds the details pane.
+    const afterFirst = widthNow();
+    // Select a commit, which rebuilds the details column.
     const row = rows.querySelector('.commit-row');
     row.click();
     return settle()
       .then(settle)
       .then(function () {
-        const afterSelect = heightNow();
+        const afterSelect = widthNow();
         return drag(60).then(function () {
           return {
             before: before,
             afterFirst: afterFirst,
             afterSelect: afterSelect,
-            afterSecond: heightNow(),
+            afterSecond: widthNow(),
           };
         });
       });
@@ -381,61 +382,48 @@ function dragSplitterAroundSelection() {
 }
 
 /**
- * Selects a commit and reports on the side-by-side diff it brings up: whether
- * both sides were built, whether they line up row for row, and whether
- * scrolling one carries the other with it.
+ * Selects a commit and reports on the details column it fills, and on what it
+ * asked the extension to open. Visual Studio shows a commit's first file at
+ * once; here that is VS Code's own diff editor, in a group beneath the window,
+ * so the window itself must draw no diff at all.
  */
-function inspectDiffPane() {
+function inspectDetails() {
+  window.__VSG_OPENED_DIFFS = [];
   const row = document.querySelector('.rows .commit-row');
   row.click();
   return settle()
     .then(settle)
     .then(settle)
     .then(function () {
-      const sides = [...document.querySelectorAll('.diff-side')];
-      if (sides.length !== 2) {
-        return { sides: sides.length };
-      }
-      const counts = sides.map(function (side) {
-        return side.querySelectorAll('.diff-row').length;
-      });
-      const heights = sides.map(function (side) {
-        return Math.round(side.querySelector('.diff-rows').getBoundingClientRect().height);
-      });
-
-      sides[0].scrollTop = 120;
-      return settle()
-        .then(settle)
-        .then(function () {
-          return {
-            sides: 2,
-            counts: counts,
-            heights: heights,
-            scrolled: sides[0].scrollTop,
-            follower: sides[1].scrollTop,
-            words: document.querySelectorAll('.diff-row .word').length,
-            keywords: document.querySelectorAll('.diff-row .tok-keyword').length,
-            comments: document.querySelectorAll('.diff-row .tok-comment').length,
-            // A piece that is both changed and coloured proves the two
-            // markings compose rather than one winning.
-            both: document.querySelectorAll('.diff-row .word.tok-keyword, .diff-row .word.tok-type, .diff-row .word.tok-string').length,
-            added: document.querySelectorAll('.diff-row.k-add').length,
-            removed: document.querySelectorAll('.diff-row.k-del').length,
-            gaps: document.querySelectorAll('.diff-row.k-gap').length,
-            files: document.querySelectorAll('.changes .tree-row.change-file').length,
-            selectedFiles: document.querySelectorAll('.changes .tree-row.change-file.selected').length,
-            dirs: document.querySelectorAll('.changes .tree-row.group-node').length,
-          };
-        });
+      const details = document.querySelector('.details');
+      const rows = document.querySelector('.rows');
+      const opened = window.__VSG_OPENED_DIFFS;
+      const selected = document.querySelector('.changes .tree-row.change-file.selected');
+      const box = details ? details.getBoundingClientRect() : null;
+      const list = rows.getBoundingClientRect();
+      return {
+        beside: !!box && Math.round(box.left) >= Math.round(list.right),
+        tall: !!box && Math.abs(box.bottom - list.bottom) <= 2,
+        drawsDiff: !!document.querySelector('.diff-side, .diff-row, .diff-area'),
+        files: document.querySelectorAll('.changes .tree-row.change-file').length,
+        selectedFiles: document.querySelectorAll('.changes .tree-row.change-file.selected').length,
+        dirs: document.querySelectorAll('.changes .tree-row.group-node').length,
+        opened: opened.length,
+        openedPath: opened.length ? opened[0].path : null,
+        openedKeep: opened.length ? opened[0].keep : null,
+        selectedPath: selected ? selected.title.split(String.fromCharCode(10))[0] : null,
+      };
     });
 }
 
 /**
  * Scrolls the metadata rail down, clicks another file, and reports where the
- * rail ended up. Selecting a file rebuilds the whole pane, and a rail that
- * starts again from the top puts the file just clicked out of reach.
+ * rail ended up and what was asked for. Selecting a file rebuilds the whole
+ * column, and a rail that starts again from the top puts the file just
+ * clicked out of reach.
  */
 function railScrollAcrossFileClick() {
+  window.__VSG_OPENED_DIFFS = [];
   const scroller = document.querySelector('.meta-rail .scroll');
   scroller.scrollTop = scroller.scrollHeight;
   return settle().then(function () {
@@ -443,11 +431,13 @@ function railScrollAcrossFileClick() {
     const files = [...document.querySelectorAll('.changes .tree-row.change-file')];
     const target = files[files.length - 1];
     const name = target.querySelector('.label').textContent;
+    const path = target.title.split(String.fromCharCode(10))[0];
     target.click();
     return settle()
       .then(settle)
       .then(function () {
         const after = document.querySelector('.meta-rail .scroll');
+        const opened = window.__VSG_OPENED_DIFFS;
         return {
           scrollable: before > 0,
           before: before,
@@ -455,90 +445,28 @@ function railScrollAcrossFileClick() {
           clicked: name,
           selected: (document.querySelector('.changes .tree-row.change-file.selected .label') || {})
             .textContent,
+          path: path,
+          opened: opened.map(function (m) {
+            return m.path;
+          }),
+          keep: opened.length ? opened[opened.length - 1].keep : null,
         };
       });
   });
 }
 
 /**
- * Opens the generated file, whose every line changed, and reports what that
- * costs. A diff this dense used to be built in full - 20,000 rows in each
- * column - which wedged the window; the point of the check is that what
- * reaches the DOM follows the viewport, not the file.
+ * Double-clicks a file. As in VS Code's explorer, that keeps the diff open as
+ * a tab of its own instead of in the preview tab the next click replaces.
  */
-function inspectDenseDiff() {
-  const files = [...document.querySelectorAll('.changes .tree-row.change-file')];
-  const target = files.find(function (row) {
-    return row.querySelector('.label').textContent.indexOf('designer') !== -1;
+function doubleClickFile() {
+  window.__VSG_OPENED_DIFFS = [];
+  const target = document.querySelector('.changes .tree-row.change-file');
+  target.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+  return settle().then(function () {
+    const opened = window.__VSG_OPENED_DIFFS;
+    return { keep: opened.length ? opened[opened.length - 1].keep : null };
   });
-  const started = performance.now();
-  target.click();
-  return settle()
-    .then(settle)
-    .then(settle)
-    .then(function () {
-      const elapsed = Math.round(performance.now() - started);
-      const sides = [...document.querySelectorAll('.diff-side')];
-      const host = sides[0].querySelector('.diff-rows');
-      const rendered = sides.map(function (side) {
-        return side.querySelectorAll('.diff-row').length;
-      });
-
-      // Halfway down, to prove the window moves rather than just starting small.
-      sides[0].scrollTop = Math.round(sides[0].scrollHeight / 2);
-      return settle()
-        .then(settle)
-        .then(function () {
-          const firstNo = host.querySelector('.diff-row .ln');
-          return {
-            elapsed: elapsed,
-            rendered: rendered,
-            nodes: document.querySelectorAll('.diff-row').length,
-            scrollHeight: sides[0].scrollHeight,
-            followerTop: sides[1].scrollTop,
-            leaderTop: sides[0].scrollTop,
-            firstLineNo: firstNo ? Number(firstNo.textContent) : -1,
-            changes: (document.querySelector('.details-toolbar .count') || {}).textContent,
-          };
-        });
-    });
-}
-
-/**
- * Opens the minified bundle, whose lines run to tens of thousands of characters.
- * Bounding the rows is not enough on its own: a line coloured token by token
- * becomes a node per token, and a screenful of those is what hangs a renderer.
- */
-function inspectWideDiff() {
-  const files = [...document.querySelectorAll('.changes .tree-row.change-file')];
-  const target = files.find(function (row) {
-    return row.querySelector('.label').textContent.indexOf('.min.js') !== -1;
-  });
-  const started = performance.now();
-  target.click();
-  return settle()
-    .then(settle)
-    .then(settle)
-    .then(function () {
-      const elapsed = Math.round(performance.now() - started);
-      const rows = [...document.querySelectorAll('.diff-row')];
-      let worst = 0;
-      for (const row of rows) {
-        const n = row.querySelectorAll('.code *').length;
-        if (n > worst) {
-          worst = n;
-        }
-      }
-      const host = document.querySelector('.diff-rows');
-      return {
-        elapsed: elapsed,
-        rows: rows.length,
-        worstRow: worst,
-        total: document.querySelectorAll('.diff-row .code *').length,
-        width: host ? Math.round(host.getBoundingClientRect().width) : -1,
-        highlighted: document.querySelectorAll('.diff-row .word').length,
-      };
-    });
 }
 
 /**
@@ -818,9 +746,8 @@ function inspectCommitRowFeatures() {
     .then(settle)
     .then(function () {
       result.leftAfter = !!document.querySelector('.left');
-      // Scoped to the upper band: the details pane's own rail divider is
-      // also a vertical splitter and is nothing to do with this.
-      result.splitterGone = !document.querySelector('.upper .splitter.vertical');
+      // The refs pane's own divider: the details column has one too.
+      result.splitterGone = !document.querySelector('.splitter.left-divider');
       const rows = document.querySelector('.rows');
       result.rowsWidened = rows.getBoundingClientRect().width;
       document.querySelector('.toolbar .icon-btn').click();
@@ -834,7 +761,7 @@ function inspectCommitRowFeatures() {
     });
 }
 
-/** Selects the first changed file, so the screenshot shows a representative diff. */
+/** Selects the first changed file, so the screenshot shows a selection in the tree. */
 function selectFirstFile() {
   const first = document.querySelector('.changes .tree-row.change-file');
   if (first) {
@@ -1150,62 +1077,38 @@ async function main() {
 
     const drag = await evaluate(cdp, dragSplitterAroundSelection);
     check(
-      'the details divider resizes the pane',
+      'the details divider resizes the column',
       drag.afterFirst > drag.before + 20,
       drag.before + 'px then ' + drag.afterFirst + 'px'
     );
     check(
       'the splitter still works after a commit is selected',
       drag.afterSecond > drag.afterSelect + 20,
-      drag.afterSelect + 'px then ' + drag.afterSecond + 'px (selecting replaces the pane)'
+      drag.afterSelect + 'px then ' + drag.afterSecond + 'px (selecting replaces the column)'
     );
 
-    const diff = await evaluate(cdp, inspectDiffPane);
+    const details = await evaluate(cdp, inspectDetails);
     check(
-      'selecting a commit builds both sides of the diff',
-      diff.sides === 2,
-      diff.sides + ' diff column(s)'
+      'the details sit in a column beside the history, its full height',
+      details.beside && details.tall,
+      details.beside ? (details.tall ? 'beside, full height' : 'beside, but not full height') : 'not beside'
     );
     check(
-      'the two sides hold the same rows, so a deletion sits opposite its replacement',
-      diff.sides === 2 && diff.counts[0] === diff.counts[1] && diff.heights[0] === diff.heights[1],
-      diff.sides === 2
-        ? diff.counts.join(' vs ') + ' rows, ' + diff.heights.join('px vs ') + 'px'
-        : 'no diff'
+      'the window draws no diff of its own',
+      !details.drawsDiff,
+      details.drawsDiff ? 'a diff element is in the DOM' : 'none'
     );
     check(
-      'scrolling one side carries the other with it',
-      diff.sides === 2 && diff.scrolled > 0 && diff.follower === diff.scrolled,
-      diff.sides === 2 ? diff.scrolled + 'px then ' + diff.follower + 'px' : 'no diff'
+      'the changes tree nests the files and marks one selected',
+      details.files > 0 && details.dirs > 0 && details.selectedFiles === 1,
+      details.files + ' file(s) under ' + details.dirs + ' folder(s), ' +
+        details.selectedFiles + ' selected'
     );
     check(
-      'every row kind is drawn',
-      diff.sides === 2 && diff.added > 0 && diff.removed > 0 && diff.gaps > 0 && diff.words > 0,
-      diff.sides === 2
-        ? diff.added + ' added, ' + diff.removed + ' removed, ' + diff.gaps +
-          ' gap(s), ' + diff.words + ' highlighted word(s)'
-        : 'no diff'
-    );
-    check(
-      'the changes tree nests the files and opens on the first one',
-      diff.sides === 2 && diff.files > 0 && diff.dirs > 0 && diff.selectedFiles === 1,
-      diff.sides === 2
-        ? diff.files + ' file(s) under ' + diff.dirs + ' folder(s), ' +
-          diff.selectedFiles + ' selected'
-        : 'no diff'
-    );
-
-    check(
-      'the diff is syntax coloured',
-      diff.sides === 2 && diff.keywords > 0 && diff.comments > 0,
-      diff.sides === 2
-        ? diff.keywords + ' keyword(s), ' + diff.comments + ' comment(s)'
-        : 'no diff'
-    );
-    check(
-      'a changed word keeps its colour as well as its highlight',
-      diff.sides === 2 && diff.both > 0,
-      diff.sides === 2 ? diff.both + ' piece(s) carrying both' : 'no diff'
+      "selecting a commit opens its first file's diff, in the preview tab",
+      details.opened === 1 && details.openedPath === details.selectedPath && details.openedKeep === false,
+      details.opened + ' opened (' + details.openedPath + ', keep ' + details.openedKeep +
+        '), selected ' + details.selectedPath
     );
 
     const rail = await evaluate(cdp, railScrollAcrossFileClick);
@@ -1221,56 +1124,17 @@ async function main() {
       rail.selected === rail.clicked,
       'clicked ' + rail.clicked + ', selected ' + rail.selected
     );
-
-    // 20,000 rows a side: the whole point is that the DOM does not grow with
-    // the file. A generous ceiling - what matters is that it is a ceiling.
-    const dense = await evaluate(cdp, inspectDenseDiff);
     check(
-      'a whole-file diff of 20,000 changed lines stays bounded',
-      dense.nodes > 0 && dense.nodes < 400,
-      dense.nodes + ' rows in the DOM across both columns (' + dense.rendered.join(' + ') + ')'
-    );
-    check(
-      'and it opens promptly',
-      dense.elapsed < 2000,
-      dense.elapsed + ' ms from click to drawn'
-    );
-    check(
-      'the scrollbar still spans the whole file',
-      dense.scrollHeight > 20000 * 18 * 0.9,
-      dense.scrollHeight + 'px of an expected ' + 20000 * 18 + 'px'
-    );
-    check(
-      'scrolling into the middle brings up the rows that belong there',
-      dense.firstLineNo > 9000 && dense.firstLineNo < 11000,
-      'first row on screen is line ' + dense.firstLineNo
-    );
-    check(
-      'and the other column follows it',
-      dense.followerTop === dense.leaderTop,
-      dense.leaderTop + 'px then ' + dense.followerTop + 'px'
+      "and opens that file's diff, once, in the preview tab",
+      rail.opened.length === 1 && rail.opened[0] === rail.path && rail.keep === false,
+      'asked to open ' + JSON.stringify(rail.opened) + ', keep ' + rail.keep
     );
 
-    const wide = await evaluate(cdp, inspectWideDiff);
+    const kept = await evaluate(cdp, doubleClickFile);
     check(
-      'a minified line is not drawn one element per token',
-      wide.worstRow > 0 && wide.worstRow <= 120,
-      wide.worstRow + ' elements in the busiest row, ' + wide.total + ' across the diff'
-    );
-    check(
-      'and it still opens promptly',
-      wide.elapsed < 2000,
-      wide.elapsed + ' ms from click to drawn'
-    );
-    check(
-      'the column is not stated millions of pixels wide',
-      wide.width > 0 && wide.width < 60000,
-      wide.width + 'px'
-    );
-    check(
-      'what changed in the line is still marked',
-      wide.highlighted > 0,
-      wide.highlighted + ' highlighted run(s)'
+      'a double click keeps the diff open as a tab of its own',
+      kept.keep === true,
+      'keep ' + kept.keep
     );
 
     const menu = await evaluate(cdp, inspectMenuDismissal);

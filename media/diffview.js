@@ -1,89 +1,10 @@
 /*
- * The arithmetic behind the commit details pane, kept free of the DOM so it can
- * be fed directly from tests. Loaded as a plain script by the webview (where it
+ * The commit details' changes tree, kept free of the DOM so it can be fed
+ * directly from tests. Loaded as a plain script by the webview (where it
  * defines `VsgDiffView`) and required as a module by tests/diffview.test.js.
  */
 (function (scope) {
   'use strict';
-
-  function isChanged(row) {
-    return row.kind === 'add' || row.kind === 'del' || row.kind === 'change';
-  }
-
-  /**
-   * How many character cells the widest of these lines occupies, with tabs
-   * advancing to the next multiple of `tabSize`.
-   *
-   * The diff is drawn in the editor's monospace font, so this is the column's
-   * width in `ch` units. Stating it outright is what lets the view virtualize:
-   * `width: max-content` would make the browser measure every row, including
-   * the thousands that are not on screen, which is the one thing windowing
-   * exists to avoid.
-   */
-  function widestLine(lines, tabSize) {
-    const tab = tabSize > 0 ? tabSize : 4;
-    let widest = 0;
-    // Nobody scrolls a minified bundle to its end, and a column stated at its
-    // true width would be an element millions of pixels across. The text still
-    // overflows and is still all there; past this the row's tint simply stops
-    // following it.
-    const cap = 4000;
-    for (const line of lines) {
-      if (!line) {
-        continue;
-      }
-      let width = 0;
-      for (let i = 0; i < line.length; i++) {
-        width = line[i] === '\t' ? width + tab - (width % tab) : width + 1;
-      }
-      if (width > widest) {
-        widest = width;
-      }
-      if (widest >= cap) {
-        return cap;
-      }
-    }
-    return widest;
-  }
-
-  /**
-   * The row index that starts each run of changed rows, which is what the ↑ and
-   * ↓ buttons step between and what "N changes" counts. A run is broken by any
-   * unchanged row, gaps included, so two edits either side of elided context
-   * count as two.
-   */
-  function changeAnchors(rows) {
-    const anchors = [];
-    let inRun = false;
-    for (let i = 0; i < rows.length; i++) {
-      const changed = isChanged(rows[i]);
-      if (changed && !inRun) {
-        anchors.push(i);
-      }
-      inRun = changed;
-    }
-    return anchors;
-  }
-
-  /**
-   * Which change the view is sitting on, given the first row on screen.
-   *
-   * Returns the index into `anchors` of the last change at or above that row,
-   * so scrolling through a file keeps the "3 of 7" counter honest without the
-   * ↑ ↓ buttons having to own the position. -1 means the view is above the
-   * first change.
-   */
-  function currentAnchor(anchors, firstVisibleRow) {
-    let found = -1;
-    for (let i = 0; i < anchors.length; i++) {
-      if (anchors[i] <= firstVisibleRow) {
-        found = i;
-      } else {
-        break;
-      }
-    }
-    return found;
-  }
 
   /**
    * Nests changed files on "/" for the Changes tree.
@@ -182,9 +103,6 @@
   }
 
   const api = {
-    widestLine: widestLine,
-    changeAnchors: changeAnchors,
-    currentAnchor: currentAnchor,
     buildFileTree: buildFileTree,
     visibleTreeRows: visibleTreeRows,
   };

@@ -2,7 +2,8 @@
 
 A VS Code extension that reproduces the look and feel of Visual Studio 2026's
 Git tooling: the **Git Changes** sidebar and the full **Git Repository** window
-with its commit graph, commit details pane and side-by-side diff.
+with its commit graph and commit details, and each file's diff in VS Code's own
+diff editor docked beneath it.
 
 When behaviour is in question the answer is what Visual Studio does, not what
 seems reasonable. Where VS Code makes something impossible the code says so and
@@ -117,10 +118,9 @@ A `WebviewPanel` in the editor area.
 | Message / Author / Date / ID columns | done |
 | Click to select | done, fills the commit details pane |
 | Card on hover | done: resting the pointer on a commit names the commit, author and committer with both addresses and both dates, the repository path and the message. It waits before appearing so running down the list does not flash one per row, cannot take the hover from the row underneath, and is placed by the arithmetic that keeps the context menu on screen |
-| Commit details pane | done: docked across the bottom, with a side-by-side diff of the selected file, change navigation, and a metadata rail holding the message, author/committer, clickable parents, refs and a folder tree of the changed files |
-| Side-by-side diff inside the pane | done: whole file on both sides, synced vertical scroll, word-level highlight inside an edited line, `↑` `↓` between changes, `-n` `+n` tallies ([src/git/diff.ts](src/git/diff.ts), [media/diffview.js](media/diffview.js)). The rows are windowed like the commit list, so a 20,000-line file puts a screenful in the DOM |
-| Syntax colouring in the diff | done, [media/syntax.js](media/syntax.js): a lexer for comments, strings, numbers and keywords. One C-like grammar covers TypeScript/JavaScript, C#, Java, C/C++, Go, Rust, Swift, Kotlin, Scala, PHP and Dart; there are also Python, Ruby, shell and PowerShell, SQL, CSS/SCSS/Sass/Less, JSON, YAML and XML/HTML/XAML, including MSBuild project files. Block comments and docstrings carry across lines. A file with no lexer is left plain rather than guessed at |
-| Click a file in the pane | done, shows its diff in the pane; double-click opens a real editor diff at that commit via the `vsgitstyle-blob:` scheme |
+| Commit details | done: a column beside the history holding the message, author/committer, clickable parents, refs and a folder tree of the changed files |
+| The diff | VS Code's own diff editor, opened in an editor group beneath the window - the nearest a webview can come to Visual Studio's diff docked under the history. Selecting a commit opens its first file, as Visual Studio does; the group is made the first time it is needed and closed with the window. The editor brings the overview ruler of change markers, the user's theme, search, inline or side-by-side, and folding of unchanged regions. File content reaches it as bytes, so it is decoded with the user's `files.encoding` like the file on disk |
+| Click a file in the details | done, shows its diff beneath in the preview tab the next click replaces; a double-click keeps it open as a tab of its own, as in VS Code's explorer. Focus stays in the window |
 | Double-click a commit | done, opens the whole commit as a read-only patch |
 | Commit context menu | done ([src/git/commitOps.ts](src/git/commitOps.ts)): View Commit Details, Checkout (--detach), Compare Commits, New Branch, New Tag, Revert, the three resets, Cherry-pick, Go to Parent / Go to Child, Show Outgoing / Incoming Only, New Worktree From, Copy Commit ID, View Full Patch, Refresh. The menu is asked for on right-click rather than shipped with every row, because what applies depends on the commit. "Add to Chat", "Review Commit" and "Squash Commits" are left out: each would be a button for something this extension does not do |
 | Eye toggle on a branch row | done: puts that branch into the history beside the scope, several at once, the way Visual Studio draws them; the scope's own eye is on and locked |
@@ -129,7 +129,7 @@ A `WebviewPanel` in the editor area.
 | Row virtualization | done; only the rows on screen are in the DOM, so an 8,000-commit history costs what 200 does |
 | Stays current | reloads when the repository changes anywhere - the sidebar, a terminal, another editor - not only on its own actions |
 | Resizable columns | not done; the grid template is fixed except for the graph column |
-| Resizable details pane, hideable | done: draggable dividers for the pane's height and the rail's width, a maximize toggle, a toolbar toggle and the context menu's `View Commit Details` to bring it back; all of it persists |
+| Resizable details, hideable | done: a draggable divider for the column's width, a toolbar toggle and the context menu's `View Commit Details` to bring it back; all of it persists |
 
 ### How the graph is computed
 
@@ -205,10 +205,10 @@ JSONL file in the extension's global storage. Every risky operation writes a
 so the log survives the window being killed - which an OutputChannel does not.
 
 Read it from the bottom. A trailing unmatched `begin` names what never came
-back, and which side it was on: `fileDiff.read` is the extension host, in git or
-the parser; `fileDiff.render` is the webview, since that record is closed by the
-webview's own acknowledgement. The `end` lines carry rows, spans and
-milliseconds, so a run that merely crawled is as legible as one that stopped.
+back - a branch operation, a commit operation or a comparison, with the ref or
+commit it was working on. Errors the webview throws are recorded too, since
+nothing else can see them. The `end` lines carry milliseconds and counts, so a
+run that merely crawled is as legible as one that stopped.
 The log is trimmed to 256 KB when a session opens it.
 
 The mechanism is in [src/diagnostics.ts](src/diagnostics.ts), free of `vscode`
@@ -273,10 +273,10 @@ Against git itself, in throwaway repositories built in the temp directory:
   **[tests/commitOps.test.js](tests/commitOps.test.js)** - which menu entries
   apply to a given branch or commit, what each is called, which are disabled
   and why, what has to be confirmed, and the exact git arguments behind each.
-- **[tests/diff.test.js](tests/diff.test.js)** - one file's changes as
-  aligned side-by-side rows: additions, deletions, edits with their
-  intra-line spans, a file too large for whole-file context falling back to
-  hunks with gap rows, and a removed line whose own text starts with `--`.
+- **[tests/refNames.test.js](tests/refNames.test.js)** - new branch and tag
+  names as git's `check-ref-format` judges them, including the two answers not
+  taken at its word: `@{-1}`, which it expands to the previous branch, and a
+  lone `@`.
 
 From captured output or synthetic input, no git needed:
 
@@ -302,13 +302,11 @@ From captured output or synthetic input, no git needed:
   checked-out branch and tags survive the chip cap ahead of remotes, and a
   local branch with a slash in it is ranked as if it were remote - a known
   limitation, pinned deliberately.
-- **[tests/diffview.test.js](tests/diffview.test.js)** - the details pane's
-  arithmetic: the widest line with tabs expanded, change anchors and which one
-  is current, the changed-files tree and which of its rows are visible.
-- **[tests/syntax.test.js](tests/syntax.test.js)** - the lexer, per language:
-  comments, strings, numbers and keywords, block comments carrying across
-  lines, the segment cap, and - with a timeout so a regression fails instead of
-  wedging the run - every character that opens a word without being one.
+- **[tests/diffview.test.js](tests/diffview.test.js)** - the commit details'
+  changed-files tree and which of its rows are visible.
+- **[tests/compare.test.js](tests/compare.test.js)** - the two sides each file
+  of a comparison is opened with: none on the left for an added file, none on
+  the right for a deleted one, the old path for a rename.
 - **[tests/format.test.js](tests/format.test.js)** - dates in whatever locale
   the machine has, and popup placement that keeps a menu or card on screen.
 - **[tests/changesview.test.js](tests/changesview.test.js)** - the extension a
@@ -339,18 +337,16 @@ path itself looks like a status record, so that is what the test now feeds it.
 
 `npm run preview-check` drives [dev/preview-repo.html](dev/preview-repo.html) in
 headless Edge or Chrome over the DevTools protocol - node's built-in WebSocket,
-so no dependency - and checks what node cannot. 59 checks, covering:
+so no dependency - and checks what node cannot. 57 checks, covering:
 
 - the windowing: the scroll height is what the whole history would have been
   and never moves, the rows on screen are the right commits with no gaps at any
   scroll position, the DOM stays bounded, and selecting, collapsing a group and
   filtering all survive it;
-- the details pane: both sides of the diff hold the same rows so a deletion
-  sits opposite its replacement, the sides scroll together, every row kind is
-  drawn, the diff is coloured and a changed word keeps its colour under the
-  highlight, clicking a file leaves the changes tree where it was;
-- the worst rows: a 20,000-line whole-file diff and a minified line both open
-  promptly, stay bounded, and do not state the column millions of pixels wide;
+- the details: a column beside the history and its full height, drawing no
+  diff of its own; selecting a commit asks for its first file's diff, a click
+  on a file asks for that one in the preview tab and leaves the changes tree
+  where it was, and a double-click asks for a tab of its own;
 - the popups: the context menu closes on Escape, a click or right-click
   elsewhere, the wheel and losing focus - but not on the re-render that opening
   it causes; the branch and commit menus carry what the host described, with

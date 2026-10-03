@@ -33,7 +33,8 @@ src/
   git/          no vscode import, ever. Pure git; fully unit-tested.
     git.ts        runs git, parses --porcelain=v2 status
     graph.ts      reads the log, lays out the lanes, reads commit details
-    diff.ts       reads one file's changes as aligned side-by-side rows
+    compare.ts    the two sides of each file in a comparison
+    refNames.ts   new branch and tag names, judged by git
     tree.ts       folder tree with single-child chain compression
     worktrees.ts  linked worktrees and their changes, for the branch pane
   views/        vscode integration. Not unit-testable; keep it thin.
@@ -49,8 +50,7 @@ media/
   format.js     dates, popup placement                       [tested]
   virtual.js    row windowing arithmetic                     [tested]
   graphview.js  lane geometry, history filter, ref ranking   [tested]
-  diffview.js   details-pane arithmetic, changes tree        [tested]
-  syntax.js     the diff's syntax lexer                      [tested]
+  diffview.js   the commit details' changes tree             [tested]
   changesview.js  extension grouping, folder keys            [tested]
   repo.js       Git Repository window rendering
   main.js       Git Changes view rendering
@@ -74,8 +74,9 @@ you are writing view code.
 DevTools protocol over node's built-in WebSocket.
 
 Do not add a dependency without asking. A test framework, a diff library, a
-syntax highlighter and a DOM shim have each been considered and each declined —
-the diff parser is ~200 lines and the lexer ~300, and both are ours to fix.
+syntax highlighter and a DOM shim have each been considered and each declined.
+The diff and its colouring are VS Code's own editor's now, which needed none
+of them.
 
 ---
 
@@ -123,29 +124,27 @@ machine. `parse.test.js` holds what can be decided from captured output;
 The editor is a shared process. Two rules, both learned the hard way:
 
 **Anything that can grow with the size of a repository or a file must be
-windowed.** The commit list and the diff both use `visibleRange` from
-`media/virtual.js`. A 20,000-line file puts 80 rows in the DOM.
+windowed.** The commit list uses `visibleRange` from `media/virtual.js`, and a
+2,000-commit history puts a screenful of rows in the DOM.
 
-**Bounding the rows is not enough — bound what is inside one.** The pane hung a
-second time with the windowing already in place, because a minified line was
-drawn one element per token: 496,452 elements and 10.3 seconds for forty rows.
-A line is capped at `MAX_SEGMENTS` pieces (colour is dropped first, the diff
-highlight last), not lexed at all past `MAX_LEXED_LINE`, and `widestLine` caps
-the stated column width. Ask of any per-row work what the worst single row
-costs, not what the average one does.
+**Bounding the rows is not enough — bound what is inside one.** The hand-drawn
+diff this window used to have hung a second time with the windowing already in
+place, because a minified line was drawn one element per token: 496,452
+elements and 10.3 seconds for forty rows. Ask of any per-row work what the
+worst single row costs, not what the average one does.
 
-**Nothing that runs per row may scan a list.** `mergeSegments` rescanned every
-token for every piece, which is quadratic in the length of a line. It walks
-with cursors now.
+**Nothing that runs per row may scan a list.** The same diff rescanned every
+token for every piece of a line, which is quadratic in its length.
 
 **Never let the browser measure what you can state.** `width: max-content` on a
 windowed list defeats the windowing, because the browser lays out every row to
-find the widest. The diff states its width in `ch` from `widestLine`, since the
-font is monospace.
+find the widest.
 
-Derive once, not per render. The details pane is rebuilt when a folder is
-opened; lexing the whole file there was pure waste. `prepareFileDiff()` is
-where per-file work belongs.
+Derive once, not per render: a pane rebuilt when a folder is opened should not
+redo work that only changes when its data does.
+
+The diff itself is VS Code's editor now (see *Reproducing Visual Studio*), and
+those three hangs went with the code that had them. The lessons did not.
 
 ---
 
@@ -174,8 +173,15 @@ what seems reasonable. Screenshots of the real thing are the specification.
 
 Where VS Code makes something impossible, say so in the code and pick the
 closest honest alternative. A webview cannot host VS Code's diff editor, so the
-diff is rendered by hand; it cannot read a theme's token colours, so
-`shell.css` carries Dark Modern's with a light override.
+Git Repository window opens the real one in an editor group beneath itself,
+where Visual Studio docks its diff under the history; rendering a diff by hand
+was tried first and cost a lexer, a diff parser and three hangs, while the
+real editor brings the overview ruler, the user's theme and search for
+nothing. A webview cannot read a theme's colours either, so `shell.css`
+carries Dark Modern's with a light override.
+
+Prefer VS Code's own editors to drawing one: reach for a webview only for what
+no editor can show.
 
 Do not add buttons for features that are not implemented. VS's commit details
 pane has Revert and Reset; ours does not, so ours has no such buttons.
@@ -225,15 +231,12 @@ window being killed — which an OutputChannel does not.
 
 Read it from the bottom. Every risky operation writes a `begin` before it
 starts and an `end` when it finishes, so **a trailing unmatched `begin` names
-what never came back**, and which side it was on:
+what never came back** - `branchOp`, `commitOp` or `compare`, each with the
+ref or commit it was working on. Errors the webview throws are recorded too, as
+`webview.uncaught`, since nothing else in the extension host can see them.
 
-- `fileDiff.read` unmatched → the extension host, in git or the parser.
-- `fileDiff.render` unmatched → the renderer. That record is closed by the
-  webview's own acknowledgement, so its absence means the payload went out and
-  nothing came back.
-
-The `end` lines carry rows, spans and milliseconds, so a run that merely
-crawled is as legible as one that stopped.
+The `end` lines carry milliseconds and counts, so a run that merely crawled is
+as legible as one that stopped.
 
 `parseLog` and `unfinished` in `src/diagnostics.ts` do the reading.
 

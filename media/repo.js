@@ -11,25 +11,12 @@
   const LANE_W = 14;
   const LANE_COLORS = 8;
 
-  // Height of one line in the side-by-side diff. The two sides only stay in
-  // step because every row is exactly this tall, so the value is pushed into
-  // the stylesheet rather than being written down in both places.
-  const CODE_ROW_H = 18;
-
-  // The line-number gutter, which the column's stated width has to allow for
-  // on top of the code itself. Matches .diff-row .ln in repo.css.
-  const LN_WIDTH = 64;
-
-  // Matches `tab-size` on .diff-side; used to work out how wide a line is.
-  const TAB_SIZE = 4;
-
   // Rows kept in the DOM beyond each edge of the viewport, so a small scroll is
   // already covered by the time the next frame runs.
   const OVERSCAN = 8;
 
   const visibleRange = self.VsgVirtual.visibleRange;
   const diffView = self.VsgDiffView;
-  const syntax = self.VsgSyntax;
   const graphView = self.VsgGraphView;
   const dom = self.VsgDom;
   const format = self.VsgFormat;
@@ -46,23 +33,14 @@
     selected: null,
     leftWidth: persisted.leftWidth || 260,
     detailsVisible: persisted.detailsVisible !== false,
-    // The details pane is docked across the bottom, so it is sized by height;
-    // the metadata rail inside it is the only part still sized by width.
-    detailsHeight: persisted.detailsHeight || 380,
-    metaWidth: persisted.metaWidth || 300,
-    detailsMax: persisted.detailsMax || false,
+    // The details are a column beside the history, now that the diff they used
+    // to sit over opens in VS Code's own editor beneath the window.
+    detailsWidth: persisted.detailsWidth || 320,
     details: null,
     detailsError: null,
     detailsLoading: false,
-    /** Path of the file whose diff the pane is showing. */
+    /** Path of the file last opened from the changes tree, marked selected. */
     detailsFile: null,
-    fileDiff: null,
-    fileDiffError: null,
-    fileDiffLoading: false,
-    // Derived from fileDiff once, by prepareFileDiff(), because the pane is
-    // rebuilt far more often than the file changes.
-    fileHighlights: null,
-    fileWidths: null,
     changesClosed: new Set(persisted.changesClosed || []),
     /** The refs pane folded to a strip, for a narrow window. */
     leftCollapsed: persisted.leftCollapsed || false,
@@ -77,20 +55,11 @@
       treeClosed: [...state.treeClosed],
       leftWidth: state.leftWidth,
       detailsVisible: state.detailsVisible,
-      detailsHeight: state.detailsHeight,
-      metaWidth: state.metaWidth,
-      detailsMax: state.detailsMax,
+      detailsWidth: state.detailsWidth,
       changesClosed: [...state.changesClosed],
       leftCollapsed: state.leftCollapsed,
     });
   }
-
-  const now =
-    typeof performance === 'object' && performance.now
-      ? function () {
-          return performance.now();
-        }
-      : Date.now;
 
   function post(message) {
     vscode.postMessage(message);
@@ -236,21 +205,20 @@
     // a busy history is clipped by the grid template.
     root.style.setProperty('--vsg-col-graph', graphWidth(state.model.graph.maxLanes) + 'px');
 
-    root.style.setProperty('--vsg-code-row', CODE_ROW_H + 'px');
-
-    // Visual Studio docks commit details across the bottom of the window, so
-    // the refs and the history share an upper band and the pane spans the
-    // whole width beneath them rather than taking a column beside them.
+    // Refs, history and commit details side by side. Visual Studio docks the
+    // details across the bottom, over the diff; here the diff is VS Code's own
+    // editor, opened in a group beneath this whole window, so the details take
+    // a column instead and leave the history its full height.
     const body = el('div', 'body');
-    const upper = el('div', 'upper' + (state.detailsVisible && state.detailsMax ? ' hidden' : ''));
     // Folded away the pane costs nothing but its divider, which goes with it:
     // there is no width left to drag.
     if (!state.leftCollapsed) {
       const left = renderLeft();
       left.style.flexBasis = state.leftWidth + 'px';
-      upper.appendChild(left);
-      upper.appendChild(
+      body.appendChild(left);
+      body.appendChild(
         renderSplitter({
+          className: 'left-divider',
           selector: '.left',
           axis: 'x',
           min: 140,
@@ -261,29 +229,25 @@
         })
       );
     }
-    upper.appendChild(renderRight());
-    body.appendChild(upper);
+    body.appendChild(renderRight());
 
     if (state.detailsVisible) {
-      if (!state.detailsMax) {
-        body.appendChild(
-          renderSplitter({
-            selector: '.details',
-            axis: 'y',
-            // Dragging the divider up has to make the pane below it taller.
-            invert: true,
-            min: 150,
-            max: Math.max(200, window.innerHeight - 160),
-            apply: function (size) {
-              state.detailsHeight = size;
-            },
-          })
-        );
-      }
+      body.appendChild(
+        renderSplitter({
+          className: 'details-divider',
+          selector: '.details',
+          axis: 'x',
+          // The column sits at the right edge, so dragging left has to widen it.
+          invert: true,
+          min: 220,
+          max: 720,
+          apply: function (size) {
+            state.detailsWidth = size;
+          },
+        })
+      );
       const details = renderDetails();
-      if (!state.detailsMax) {
-        details.style.flexBasis = state.detailsHeight + 'px';
-      }
+      details.style.flexBasis = state.detailsWidth + 'px';
       body.appendChild(details);
     }
     root.appendChild(body);
@@ -296,7 +260,6 @@
     // Only now is the pane laid out, which is what the row windows measure
     // themselves against.
     syncWindows();
-    installDiffScroll();
 
     installKeyboardNavigation(root);
   }
@@ -376,12 +339,16 @@
    */
   /**
    * A draggable divider. `axis` picks the dimension it moves in, `invert` is
-   * for a pane that grows as the pointer travels toward its own edge - both the
-   * bottom dock and the right-hand rail do - and `apply` records the new size.
+   * for a pane that grows as the pointer travels toward its own edge - as the
+   * details column at the right does - and `apply` records the new size.
    */
   function renderSplitter(options) {
     const horizontal = options.axis !== 'y';
-    const splitter = el('div', 'splitter ' + (horizontal ? 'vertical' : 'horizontal'));
+    const splitter = el(
+      'div',
+      'splitter ' + (horizontal ? 'vertical' : 'horizontal') +
+        (options.className ? ' ' + options.className : '')
+    );
     splitter.addEventListener('mousedown', function (event) {
       event.preventDefault();
       splitter.classList.add('dragging');
@@ -1249,10 +1216,6 @@
     state.detailsError = null;
     state.detailsLoading = true;
     state.detailsFile = null;
-    state.fileDiff = null;
-    state.fileDiffError = null;
-    state.fileDiffLoading = false;
-    prepareFileDiff();
     post({ type: 'selectCommit', hash: hash });
     renderRowsOnly();
     renderDetailsOnly();
@@ -1282,15 +1245,12 @@
       return;
     }
     const next = renderDetails();
-    if (!state.detailsMax) {
-      next.style.flexBasis = state.detailsHeight + 'px';
-    }
+    next.style.flexBasis = state.detailsWidth + 'px';
     // The rail is rebuilt whole on every file click, so without this the tree
     // jumps back to the top and the file just clicked scrolls out of reach.
     const railTop = railScrollTop();
     existing.replaceWith(next);
     restoreRailScroll(railTop);
-    installDiffScroll();
   }
 
   function railScrollTop() {
@@ -1306,7 +1266,7 @@
   }
 
   function renderDetails() {
-    const pane = el('div', 'details' + (state.detailsMax ? ' max' : ''));
+    const pane = el('div', 'details');
     pane.appendChild(renderDetailsHead());
 
     if (state.detailsError) {
@@ -1325,27 +1285,7 @@
       return pane;
     }
 
-    pane.appendChild(renderDiffToolbar(d));
-
-    const inner = el('div', 'details-body');
-    inner.appendChild(renderDiffArea(d));
-    inner.appendChild(
-      renderSplitter({
-        selector: '.meta-rail',
-        axis: 'x',
-        // The rail sits at the right edge, so dragging left has to widen it.
-        invert: true,
-        min: 220,
-        max: 620,
-        apply: function (size) {
-          state.metaWidth = size;
-        },
-      })
-    );
-    const rail = renderMetaRail(d);
-    rail.style.flexBasis = state.metaWidth + 'px';
-    inner.appendChild(rail);
-    pane.appendChild(inner);
+    pane.appendChild(renderMetaRail(d));
     return pane;
   }
 
@@ -1354,18 +1294,6 @@
     const title = state.details ? 'Commit ' + state.details.shortHash : 'Commit details';
     head.appendChild(el('span', 'title', title));
     head.appendChild(el('div', 'spacer'));
-    head.appendChild(
-      iconButton(
-        state.detailsMax ? 'chevron-down' : 'chevron-up',
-        state.detailsMax ? 'Restore' : 'Maximize',
-        function () {
-          state.detailsMax = !state.detailsMax;
-          save();
-          render();
-          installDiffScroll();
-        }
-      )
-    );
     head.appendChild(
       iconButton('close', 'Hide commit details', function () {
         state.detailsVisible = false;
@@ -1379,403 +1307,22 @@
   // ------------------------------------------------------------------- diff
 
   /**
-   * The two columns, so one scroll can refill both from a single range. They
-   * hold the same rows at the same height, so sharing the range is what keeps
-   * a deletion exactly opposite the line that replaced it.
+   * Shows one file's change in VS Code's own diff editor, which the extension
+   * opens in an editor group beneath this window - Visual Studio docks the
+   * diff under its history the same way. A webview cannot host that editor,
+   * so the window does not draw a diff of its own: the real one brings the
+   * overview ruler, the user's theme, search and the rest for nothing.
    */
-  let diffPanes = [];
-
-  /** Where the ↑ ↓ buttons step, computed once per file rather than per frame. */
-  let diffAnchors = [];
-
-  function renderDiffToolbar(d) {
-    const bar = el('div', 'details-toolbar');
-    const diff = state.fileDiff;
-    const count = diffAnchors.length;
-
-    bar.appendChild(
-      iconButton(
-        'arrow-up',
-        'Previous change',
-        function () {
-          gotoChange(-1);
-        },
-        count === 0
-      )
-    );
-    bar.appendChild(
-      iconButton(
-        'arrow-down',
-        'Next change',
-        function () {
-          gotoChange(1);
-        },
-        count === 0
-      )
-    );
-
-    bar.appendChild(el('span', 'count', count === 1 ? '1 change' : count + ' changes'));
-    if (diff) {
-      bar.appendChild(el('span', 'tally minus', '-' + diff.removed));
-      bar.appendChild(el('span', 'tally plus', '+' + diff.added));
-    }
-
-    if (state.detailsFile) {
-      const name = el('span', 'file-name', state.detailsFile.split('/').pop());
-      name.title = state.detailsFile;
-      bar.appendChild(name);
-    }
-
-    bar.appendChild(el('div', 'spacer'));
-    if (state.detailsFile) {
-      bar.appendChild(
-        iconButton('go-to-file', 'Open this diff in an editor', function () {
-          openSelectedInEditor(d);
-        })
-      );
-    }
-    return bar;
-  }
-
-  function renderDiffArea(d) {
-    const area = el('div', 'diff-area');
-    diffPanes = [];
-
-    if (!state.detailsFile) {
-      area.appendChild(el('div', 'placeholder', 'Select a file to see its changes.'));
-      return area;
-    }
-    if (state.fileDiffError) {
-      area.appendChild(el('div', 'placeholder', state.fileDiffError));
-      return area;
-    }
-    if (state.fileDiffLoading || !state.fileDiff) {
-      area.appendChild(el('div', 'placeholder', 'Loading…'));
-      return area;
-    }
-    if (state.fileDiff.binary) {
-      area.appendChild(el('div', 'placeholder', 'Binary file - no text diff to show.'));
-      return area;
-    }
-
-    const rows = state.fileDiff.rows;
-    if (!rows.length) {
-      area.appendChild(el('div', 'placeholder', 'No changes in this file.'));
-      return area;
-    }
-
-    const name = state.detailsFile.split('/').pop();
-    const parent = d.parents.length ? d.parents[0].slice(0, 7) : 'empty tree';
-    const oldName = state.fileDiff.origPath ? state.fileDiff.origPath.split('/').pop() : name;
-
-    const titles = el('div', 'diff-titles');
-    titles.appendChild(el('div', 'diff-title', oldName + ' (' + parent + ')'));
-    titles.appendChild(el('div', 'diff-title', name + ' (' + d.shortHash + ')'));
-    area.appendChild(titles);
-
-    const scroll = el('div', 'diff-scroll');
-    scroll.appendChild(renderDiffSide(rows, true));
-    scroll.appendChild(renderDiffSide(rows, false));
-    area.appendChild(scroll);
-
-    if (state.fileDiff.truncated) {
-      area.appendChild(
-        el('div', 'diff-note', 'Too large to show whole; unchanged regions are elided.')
-      );
-    }
-    return area;
-  }
-
-  /**
-   * One column of the diff, as an empty window that syncDiffWindows() fills.
-   *
-   * Nothing is built here: a reformatted file is tens of thousands of rows, and
-   * putting them all in the DOM is what wedged the window before this was
-   * windowed. The column's width is stated outright in `ch` rather than left to
-   * `max-content`, which would make the browser measure every row and undo the
-   * saving.
-   */
-  function renderDiffSide(rows, isOld) {
-    const column = el('div', 'diff-side');
-    column.dataset.side = isOld ? 'old' : 'new';
-
-    const host = el('div', 'diff-rows');
-    host.style.width = 'calc(' + LN_WIDTH + 'px + ' + (widestOf(isOld) + 2) + 'ch)';
-    column.appendChild(host);
-
-    diffPanes.push({
-      host: host,
-      rows: rows,
-      isOld: isOld,
-      highlights: state.fileHighlights ? (isOld ? state.fileHighlights.old : state.fileHighlights.new) : null,
-      start: -1,
-      end: -1,
+  function openFile(d, file, keep) {
+    state.detailsFile = file.path;
+    post({
+      type: 'openFileDiff',
+      hash: d.hash,
+      path: file.path,
+      origPath: file.origPath,
+      status: file.status,
+      keep: !!keep,
     });
-    return column;
-  }
-
-  function widestOf(isOld) {
-    const widths = state.fileWidths;
-    if (!widths) {
-      return 80;
-    }
-    return isOld ? widths.old : widths.new;
-  }
-
-  /**
-   * Builds the rows now on screen, into both columns, from one range.
-   *
-   * The padding above and below stands in for the rows that are not built, so
-   * the scrollbar reflects the whole file and a row keeps its place under the
-   * pointer. Each refill is a no-op unless the range actually moved.
-   */
-  function syncDiffWindows() {
-    if (!diffPanes.length) {
-      return;
-    }
-    const scroller = root.querySelector('.diff-side');
-    if (!scroller) {
-      return;
-    }
-    const range = visibleRange({
-      total: diffPanes[0].rows.length,
-      rowHeight: CODE_ROW_H,
-      overscan: OVERSCAN,
-      offset: 0,
-      scrollTop: scroller.scrollTop,
-      viewportHeight: scroller.clientHeight,
-    });
-
-    for (const pane of diffPanes) {
-      if (pane.start === range.start && pane.end === range.end) {
-        continue;
-      }
-      pane.start = range.start;
-      pane.end = range.end;
-      pane.host.textContent = '';
-      pane.host.style.paddingTop = range.start * CODE_ROW_H + 'px';
-      pane.host.style.paddingBottom = (pane.rows.length - range.end) * CODE_ROW_H + 'px';
-      for (let i = range.start; i < range.end; i++) {
-        pane.host.appendChild(diffRow(pane, i));
-      }
-    }
-  }
-
-  let diffSyncQueued = false;
-
-  function queueDiffSync() {
-    if (diffSyncQueued) {
-      return;
-    }
-    diffSyncQueued = true;
-    requestAnimationFrame(function () {
-      diffSyncQueued = false;
-      syncDiffWindows();
-    });
-  }
-
-  // Same reasoning as the commit list's observer: how many rows are needed
-  // follows the scroller's height, which the dividers and the maximize button
-  // change without the window ever being resized.
-  const diffObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(queueDiffSync) : null;
-  if (!diffObserver) {
-    window.addEventListener('resize', queueDiffSync);
-  }
-
-  /** One row of one column. */
-  function diffRow(pane, index) {
-    const row = pane.rows[index];
-    const isOld = pane.isOld;
-    const text = isOld ? row.oldText : row.newText;
-    const lineNo = isOld ? row.oldNo : row.newNo;
-
-    let kind = row.kind;
-    if (row.kind !== 'gap' && text === null) {
-      // The blank standing opposite a line this side does not have.
-      kind = 'empty';
-    } else if (row.kind === 'add' || row.kind === 'del' || row.kind === 'change') {
-      // An edited line reads as removed on the left and added on the right;
-      // the word highlight inside it says what actually moved.
-      kind = isOld ? 'del' : 'add';
-    }
-
-    const node = el('div', 'diff-row k-' + kind);
-    node.appendChild(el('span', 'ln', lineNo === null ? '' : String(lineNo)));
-
-    if (row.kind === 'gap') {
-      const skipped = row.skipped || 0;
-      node.appendChild(
-        el(
-          'span',
-          'code gap-label',
-          skipped === 1 ? '1 unchanged line' : skipped + ' unchanged lines'
-        )
-      );
-    } else {
-      node.appendChild(
-        renderCode(
-          text,
-          isOld ? row.oldSpans : row.newSpans,
-          pane.highlights ? pane.highlights[index] : null
-        )
-      );
-    }
-    return node;
-  }
-
-  /**
-   * A line of code, carrying both its syntax colouring and the parts the diff
-   * found changed. The two overlap freely, so the line is cut at every boundary
-   * of either and each piece gets whichever of the two apply to it.
-   *
-   * Text goes in as text nodes rather than as markup, so a line containing
-   * angle brackets stays a line of code.
-   */
-  function renderCode(text, spans, tokens) {
-    const node = el('span', 'code');
-    if (text === null) {
-      return node;
-    }
-    const segments = syntax.mergeSegments(text.length, tokens, spans);
-    // The overwhelmingly common case: a line with nothing to mark, which is
-    // one text node rather than a span.
-    if (segments.length <= 1 && (!segments[0] || (!segments[0].type && !segments[0].word))) {
-      node.textContent = text;
-      return node;
-    }
-
-    for (const segment of segments) {
-      const piece = text.slice(segment.start, segment.end);
-      if (!segment.type && !segment.word) {
-        node.appendChild(document.createTextNode(piece));
-        continue;
-      }
-      const classes = [];
-      if (segment.type) {
-        classes.push('tok-' + segment.type);
-      }
-      if (segment.word) {
-        classes.push('word');
-      }
-      node.appendChild(el('span', classes.join(' '), piece));
-    }
-    return node;
-  }
-
-  /**
-   * Keeps the two sides level and refills them as they move.
-   *
-   * Assigning a scrollTop that is already set fires no event, so the two
-   * handlers settle after one hop rather than chasing each other. Horizontal
-   * scrolling is left independent, the way Visual Studio gives each side its
-   * own bar.
-   */
-  function installDiffScroll() {
-    const sides = root.querySelectorAll('.diff-side');
-    if (sides.length !== 2) {
-      return;
-    }
-    for (const side of sides) {
-      side.addEventListener('scroll', function () {
-        const other = side === sides[0] ? sides[1] : sides[0];
-        if (other.scrollTop !== side.scrollTop) {
-          other.scrollTop = side.scrollTop;
-        }
-        queueDiffSync();
-      });
-    }
-    if (diffObserver) {
-      // The previous scroller is gone with the rest of the render.
-      diffObserver.disconnect();
-      diffObserver.observe(sides[0]);
-    }
-    syncDiffWindows();
-  }
-
-  /**
-   * Steps to the next or previous run of changed lines, measuring from what is
-   * on screen rather than from a remembered index, so scrolling by hand and
-   * then pressing the button goes where the user is looking.
-   */
-  function gotoChange(delta) {
-    const sides = root.querySelectorAll('.diff-side');
-    if (!sides.length || !diffAnchors.length) {
-      return;
-    }
-
-    const firstVisible = Math.round(sides[0].scrollTop / CODE_ROW_H);
-    const at = diffView.currentAnchor(diffAnchors, firstVisible);
-    let next;
-    if (delta > 0) {
-      next = at + 1;
-    } else {
-      // Sitting on a change, "previous" means the one before it; sitting below
-      // one, it means going back to it.
-      next = diffAnchors[at] === firstVisible ? at - 1 : at;
-    }
-    next = Math.max(0, Math.min(diffAnchors.length - 1, next));
-
-    // A few rows of context above the change, so it does not land tight
-    // against the column titles.
-    const top = Math.max(0, (diffAnchors[next] - 3) * CODE_ROW_H);
-    for (const side of sides) {
-      side.scrollTop = top;
-    }
-    queueDiffSync();
-  }
-
-  /**
-   * Everything about a file's diff that does not change until another file is
-   * picked: where the changes are, how wide each side is, and its colouring.
-   *
-   * Done once here rather than inside the render, because the pane is rebuilt
-   * for things as small as opening a folder in the tree, and lexing a large
-   * file on each of those was work nobody asked for.
-   */
-  function prepareFileDiff() {
-    const diff = state.fileDiff;
-    if (!diff || diff.binary || !diff.rows.length) {
-      diffAnchors = [];
-      state.fileHighlights = null;
-      state.fileWidths = null;
-      return;
-    }
-
-    diffAnchors = diffView.changeAnchors(diff.rows);
-
-    const oldText = diff.rows.map(function (row) {
-      return row.oldText;
-    });
-    const newText = diff.rows.map(function (row) {
-      return row.newText;
-    });
-
-    // A renamed file may well have changed language, so each side asks about
-    // its own name.
-    const oldName = diff.origPath || diff.path;
-    state.fileHighlights = {
-      old: syntax.highlightLines(oldText, syntax.languageFor(oldName)),
-      new: syntax.highlightLines(newText, syntax.languageFor(diff.path)),
-    };
-    state.fileWidths = {
-      old: diffView.widestLine(oldText, TAB_SIZE),
-      new: diffView.widestLine(newText, TAB_SIZE),
-    };
-  }
-
-  function openSelectedInEditor(d) {
-    const file = (d.files || []).find(function (f) {
-      return f.path === state.detailsFile;
-    });
-    if (file) {
-      post({
-        type: 'openFileDiff',
-        hash: d.hash,
-        path: file.path,
-        origPath: file.origPath,
-        status: file.status,
-      });
-    }
   }
 
   // -------------------------------------------------------------- meta rail
@@ -1931,42 +1478,16 @@
       ? file.path + String.fromCharCode(10) + '(was ' + file.origPath + ')'
       : file.path;
     node.addEventListener('click', function () {
-      selectDetailsFile(file);
+      openFile(d, file);
+      renderDetailsOnly();
     });
-    // A double click opens the same diff in a real editor, which is the way to
-    // a full-size view with search and the editor's own navigation.
+    // As in VS Code's own explorer: a click opens the diff in the one preview
+    // tab the next click replaces, a double click keeps it open as a tab of
+    // its own.
     node.addEventListener('dblclick', function () {
-      post({
-        type: 'openFileDiff',
-        hash: d.hash,
-        path: file.path,
-        origPath: file.origPath,
-        status: file.status,
-      });
+      openFile(d, file, true);
     });
     return node;
-  }
-
-  /**
-   * Points the diff at one file and asks for it. `quiet` is for the selection
-   * made while the details themselves are being drawn, where the caller is
-   * about to render anyway.
-   */
-  function selectDetailsFile(file, quiet) {
-    state.detailsFile = file.path;
-    state.fileDiff = null;
-    state.fileDiffError = null;
-    state.fileDiffLoading = true;
-    prepareFileDiff();
-    post({
-      type: 'fileDiff',
-      hash: state.details.hash,
-      path: file.path,
-      origPath: file.origPath,
-    });
-    if (!quiet) {
-      renderDetailsOnly();
-    }
   }
 
   // ------------------------------------------------------------------------
@@ -1997,49 +1518,17 @@
         state.details = message.details || null;
         state.detailsError = message.error || null;
         state.detailsFile = null;
-        state.fileDiff = null;
-        state.fileDiffError = null;
-        state.fileDiffLoading = false;
-        prepareFileDiff();
         // Visual Studio opens a commit already showing its first file, so the
-        // pane is never a blank frame waiting to be clicked.
-        if (state.details && state.details.files.length) {
-          selectDetailsFile(state.details.files[0], true);
-        }
-        renderDetailsOnly();
-        break;
-      case 'fileDiff':
-        // A reply for a file or commit the user has since moved off is stale.
+        // diff beneath is never left on the commit before. Details for a
+        // commit the user has since clicked past open nothing.
         if (
           state.details &&
-          message.hash === state.details.hash &&
-          message.path === state.detailsFile
+          state.details.hash === state.selected &&
+          state.details.files.length
         ) {
-          {
-            const started = now();
-            state.fileDiffLoading = false;
-            state.fileDiff = message.diff || null;
-            state.fileDiffError = message.error || null;
-            prepareFileDiff();
-            const prepared = now();
-            renderDetailsOnly();
-            // Closes the record the extension host opened when it sent this.
-            // Without the acknowledgement it cannot tell a slow draw from one
-            // that never happened.
-            post({
-              type: 'diag',
-              label: 'fileDiff.render',
-              detail: {
-                prepareMs: Math.round(prepared - started),
-                drawMs: Math.round(now() - prepared),
-                rows: state.fileDiff ? state.fileDiff.rows.length : 0,
-                nodes: root.querySelectorAll('.diff-row').length,
-              },
-            });
-          }
-        } else {
-          post({ type: 'diag', label: 'fileDiff.stale', detail: { path: message.path } });
+          openFile(state.details, state.details.files[0]);
         }
+        renderDetailsOnly();
         break;
       case 'commitMenu':
         if (pendingCommitMenu && pendingCommitMenu.hash === message.hash) {

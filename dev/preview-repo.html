@@ -150,6 +150,19 @@
     ];
   }
 
+  /*
+   * Enough files that the changes tree overflows the details column, which
+   * now has the window's whole height: the check that clicking a file keeps
+   * the tree's scroll position proves nothing unless the tree scrolls.
+   */
+  function entities() {
+    var files = [];
+    for (var i = 1; i <= 40; i++) {
+      files.push({ status: 'M', path: 'Mcs.Skzz.Data/Entities/Entity' + ('00' + i).slice(-3) + '.cs' });
+    }
+    return files;
+  }
+
   let stored = {};
   window.acquireVsCodeApi = function () {
     return {
@@ -159,6 +172,11 @@
         console.log('[preview] postMessage', message);
         if (message.type === 'openWorktreeChange') {
           window.__VSG_OPENED = message;
+        }
+        // What the extension would open in VS Code's diff editor, for
+        // tools/preview-check.js to read back.
+        if (message.type === 'openFileDiff') {
+          (window.__VSG_OPENED_DIFFS = window.__VSG_OPENED_DIFFS || []).push(message);
         }
         if (message.type === 'ready' || message.type === 'refresh') {
           window.dispatchEvent(
@@ -202,7 +220,7 @@
                 { status: 'M', path: 'package.json' },
                 { status: 'M', path: 'Mcs.Skzz.Data/Generated/Model.designer.cs' },
                 { status: 'M', path: 'Mcs.Medicus.Spa/dist/bundle.min.js' }
-              ],
+              ].concat(entities()),
               truncated: false,
               isMerge: c.parents.length > 1
             } : null
@@ -236,94 +254,16 @@
             ]
           } }));
         }
-        if (message.type === 'fileDiff') {
-          window.dispatchEvent(new MessageEvent('message', { data: {
-            type: 'fileDiff',
-            hash: message.hash,
-            path: message.path,
-            diff: synthDiff(message.path)
-          } }));
-        }
       },
     };
   };
 
-  /*
-   * A whole-file diff with one edited line, a deletion and an insertion, so the
-   * preview exercises every row kind the real parser can produce - including
-   * the word-level spans, which are the fiddliest thing to get right in CSS.
-   */
-  function synthDiff(path) {
-    // A generated file that was reformatted: every line changed, which is the
-    // shape that used to put tens of thousands of rows in the DOM at once.
-    if (path.indexOf('/Generated/') !== -1) {
-      var dense = [];
-      for (var d = 1; d <= 20000; d++) {
-        dense.push({
-          kind: 'change', oldNo: d, newNo: d,
-          oldText: '        this.Column' + d + ' = reader.GetString("col_' + d + '");',
-          newText: "        this.Column" + d + " = reader.GetString('col_" + d + "');",
-          oldSpans: [[44, 45]], newSpans: [[44, 45]]
-        });
-      }
-      return { path: path, binary: false, rows: dense, added: 20000, removed: 20000, changes: 1, truncated: false };
-    }
-
-    // A minified bundle: few rows, but each line enormous. Bounded rows are not
-    // enough on their own - one row can hold a node per token.
-    if (path.indexOf('.min.js') !== -1) {
-      var wide = [];
-      for (var w = 1; w <= 40; w++) {
-        var text = 'var a' + w + '=function(x){return x+1},b=' + '{k:1,v:"s"},'.repeat(4000);
-        wide.push({
-          kind: 'change', oldNo: w, newNo: w,
-          oldText: text, newText: text.replace('return x+1', 'return x+2'),
-          oldSpans: [[10, 30]], newSpans: [[10, 30]]
-        });
-      }
-      return { path: path, binary: false, rows: wide, added: 40, removed: 40, changes: 1, truncated: false };
-    }
-
-    var rows = [];
-    var oldNo = 0;
-    var newNo = 0;
-    function same(text) {
-      oldNo++; newNo++;
-      rows.push({ kind: 'same', oldNo: oldNo, newNo: newNo, oldText: text, newText: text });
-    }
-    for (var i = 0; i < 14; i++) {
-      same(i % 4 === 0 ? '' : '        // context line ' + (i + 1) + ' of ' + path.split('/').pop());
-    }
-
-    oldNo++; newNo++;
-    var before = '        if (!this._defaultVrstePrijema) {';
-    var after = '        if (Util.isEmpty(this._defaultVrstePrijema)) {';
-    rows.push({
-      kind: 'change', oldNo: oldNo, newNo: newNo, oldText: before, newText: after,
-      oldSpans: [[12, 13]], newSpans: [[12, 27]]
-    });
-
-    for (var j = 0; j < 6; j++) { same('            this._value = ' + j + ';'); }
-
-    oldNo++;
-    rows.push({ kind: 'del', oldNo: oldNo, newNo: null, oldText: '        // a line that went away', newText: null });
-    newNo++;
-    rows.push({ kind: 'add', oldNo: null, newNo: newNo, oldText: null, newText: '        // a line that arrived' });
-
-    for (var k = 0; k < 10; k++) { same('        return this._defaultVrstePrijema;'); }
-    rows.push({ kind: 'gap', oldNo: null, newNo: null, oldText: null, newText: null, skipped: 420 });
-    oldNo += 420; newNo += 420;
-    for (var m = 0; m < 8; m++) { same('    } // tail line ' + (m + 1)); }
-
-    return { path: path, binary: false, rows: rows, added: 2, removed: 2, changes: 2, truncated: false };
-  }
 </script>
 <script src="../media/format.js"></script>
 <script src="../media/dom.js"></script>
 <script src="../media/virtual.js"></script>
 <script src="../media/graphview.js"></script>
 <script src="../media/diffview.js"></script>
-<script src="../media/syntax.js"></script>
 <script src="../media/repo.js"></script>
 </body>
 </html>

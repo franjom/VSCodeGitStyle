@@ -1,6 +1,5 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { readFileDiff } from '../git/diff';
 import { Git } from '../git/git';
 import { ChangePair, comparePairs, Side } from '../git/compare';
 import { refNameProblem, RefKind } from '../git/refNames';
@@ -86,8 +85,9 @@ type Inbound =
       path: string;
       origPath?: string;
       status: string;
+      /** A double click: a tab of its own rather than the preview tab. */
+      keep?: boolean;
     }
-  | { type: 'fileDiff'; hash: string; path: string; origPath?: string }
   | { type: 'diag'; label: string; detail?: Record<string, unknown>; failed?: boolean }
   | { type: 'branchOp'; op: BranchOp; ref: string }
   | { type: 'commitMenu'; hash: string }
@@ -284,6 +284,7 @@ export class RepositoryWindow {
     if (this.loadTimer) {
       clearTimeout(this.loadTimer);
     }
+    this.closeDiffs();
     for (const disposable of this.disposables) {
       disposable.dispose();
     }
@@ -354,10 +355,6 @@ export class RepositoryWindow {
 
         case 'openFileDiff':
           await this.openFileDiff(message);
-          return;
-
-        case 'fileDiff':
-          await this.sendFileDiff(message);
           return;
 
         case 'diag':
@@ -450,69 +447,10 @@ export class RepositoryWindow {
   }
 
   /**
-   * The side-by-side diff drawn inside the details pane. Errors travel to the
-   * webview rather than to a notification: the pane has a place to show one,
-   * and a file that cannot be read should not take the whole window with it.
-   */
-  private async sendFileDiff(
-    message: Extract<Inbound, { type: 'fileDiff' }>
-  ): Promise<void> {
-    // Reading the diff and drawing it are the two places this has hung, so both
-    // ends of each are recorded: a log ending in an unmatched "read" blames the
-    // extension host, one ending in an unmatched "post" blames the webview.
-    const read = this.diagnostics?.begin('fileDiff.read', {
-      path: message.path,
-      hash: message.hash.slice(0, 7),
-    });
-    try {
-      const diff = await readFileDiff(
-        this.git,
-        this.root,
-        message.hash,
-        message.path,
-        message.origPath
-      );
-      const spans = diff.rows.reduce(
-        (total, row) => total + (row.oldSpans?.length ?? 0) + (row.newSpans?.length ?? 0),
-        0
-      );
-      read?.({ rows: diff.rows.length, changes: diff.changes, spans, truncated: diff.truncated });
-
-      // Left open deliberately: the webview closes it when it has drawn the
-      // diff. A log ending here means the payload went out and nothing came
-      // back, which is the renderer wedged rather than us.
-      this.pendingRender?.({ abandoned: true });
-      this.pendingRender = this.diagnostics?.begin('fileDiff.render', {
-        path: message.path,
-        rows: diff.rows.length,
-      });
-      this.post({ type: 'fileDiff', hash: message.hash, path: message.path, diff });
-    } catch (err) {
-      read?.({ failed: true });
-      this.diagnostics?.error('fileDiff.read', err, { path: message.path });
-      this.post({
-        type: 'fileDiff',
-        hash: message.hash,
-        path: message.path,
-        diff: null,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }
-
-  /** Closed by the webview's acknowledgement; see sendFileDiff. */
-  private pendingRender: ((extra?: Record<string, unknown>) => void) | undefined;
-
-  /**
    * What the webview reports about its own work. It is the only way to see the
    * renderer's side of a hang: nothing else in this process can observe it.
    */
   private recordFromWebview(message: Extract<Inbound, { type: 'diag' }>): void {
-    if (message.label === 'fileDiff.render') {
-      this.pendingRender?.(message.detail);
-      this.pendingRender = undefined;
-      return;
-    }
     if (message.failed) {
       this.diagnostics?.error('webview.' + message.label, message.detail?.message ?? 'unknown', message.detail);
       return;
@@ -1010,42 +948,133 @@ export class RepositoryWindow {
     const head = await this.pinned('HEAD', worktree.path);
 
     if (message.status === 'D') {
-      const document = await vscode.workspace.openTextDocument(
-        this.blobUri(head, message.path, worktree.path)
-      );
-      await vscode.window.showTextDocument(document, { preview: true });
+      await this.showBelow({ file: this.blobUri(head, message.path, worktree.path) });
       return;
     }
     // Nothing at HEAD to compare an untracked file with, and a conflicted one
     // is better met with its markers and VS Code's merge actions than diffed.
     if (message.status === 'U' || message.status === '!') {
-      await vscode.window.showTextDocument(onDisk, { preview: true });
+      await this.showBelow({ file: onDisk });
       return;
     }
-    await vscode.commands.executeCommand(
-      'vscode.diff',
-      this.blobUri(head, message.origPath ?? message.path, worktree.path),
-      onDisk,
-      `${name} (${worktree.name})`
-    );
+    await this.showBelow({
+      left: this.blobUri(head, message.origPath ?? message.path, worktree.path),
+      right: onDisk,
+      title: `${name} (${worktree.name})`,
+    });
   }
 
   private async openFileDiff(
     message: Extract<Inbound, { type: 'openFileDiff' }>
   ): Promise<void> {
     const previous = message.origPath ?? message.path;
-    const left = this.blobUri(`${message.hash}^`, previous);
-    const right = this.blobUri(message.hash, message.path);
     const name = message.path.split('/').pop() ?? message.path;
     const short = message.hash.slice(0, 7);
-    const title =
-      message.origPath && message.origPath !== message.path
-        ? `${name} (${short}) ← ${message.origPath.split('/').pop()}`
-        : `${name} (${short})`;
     // A missing side - an added file, a deleted file, or the root commit's
     // absent parent - comes back empty from the blob provider, which reads as
     // an all-added or all-removed diff.
-    await vscode.commands.executeCommand('vscode.diff', left, right, title);
+    await this.showBelow({
+      left: this.blobUri(`${message.hash}^`, previous),
+      right: this.blobUri(message.hash, message.path),
+      title:
+        message.origPath && message.origPath !== message.path
+          ? `${name} (${short}) ← ${message.origPath.split('/').pop()}`
+          : `${name} (${short})`,
+      keep: message.keep,
+    });
+  }
+
+  /**
+   * The editor group beneath this window that its diffs open in.
+   *
+   * Visual Studio docks a commit's diff under the history, inside the one
+   * window. A webview cannot host VS Code's diff editor, so the nearest honest
+   * arrangement is a group of the editor's own directly below this one. It is
+   * made the first time a diff is opened, not when the window is, so merely
+   * looking at the history leaves the user's layout alone; and it is reused
+   * for as long as it exists, so the diffs replace one another there rather
+   * than each splitting the editor again.
+   */
+  private diffGroup: vscode.TabGroup | undefined;
+
+  private async groupBelow(): Promise<vscode.ViewColumn> {
+    const groups = vscode.window.tabGroups.all;
+    const own = groups.find((group) => group.viewColumn === this.panel.viewColumn);
+    if (this.diffGroup && groups.includes(this.diffGroup) && this.diffGroup !== own) {
+      return this.diffGroup.viewColumn;
+    }
+
+    // The command splits whichever group is active, which is this window's
+    // own while the user is clicking in it; revealing it first makes sure.
+    this.panel.reveal(this.panel.viewColumn, false);
+    // The ext host hears of the new group by event, after the command has
+    // returned or before it - so the listener goes on first. A second is a
+    // long time for an empty group to appear; past it, open beside instead.
+    const opened = new Promise<vscode.TabGroup | undefined>((resolve) => {
+      const timer = setTimeout(() => {
+        listener.dispose();
+        resolve(undefined);
+      }, 1000);
+      const listener = vscode.window.tabGroups.onDidChangeTabGroups((event) => {
+        if (event.opened.length) {
+          clearTimeout(timer);
+          listener.dispose();
+          resolve(event.opened[0]);
+        }
+      });
+    });
+    await vscode.commands.executeCommand('workbench.action.newGroupBelow');
+    this.diffGroup = await opened;
+    return this.diffGroup?.viewColumn ?? vscode.ViewColumn.Beside;
+  }
+
+  /**
+   * Opens a diff, or a single document, in the group beneath the window.
+   *
+   * Focus stays in the window, so the next click in the history or the file
+   * list needs no click back first. A preview tab is reused by the next one,
+   * the way VS Code's explorer previews files; `keep` makes a tab of its own.
+   */
+  private async showBelow(
+    what:
+      | { left: vscode.Uri; right: vscode.Uri; title: string; keep?: boolean }
+      | { file: vscode.Uri }
+  ): Promise<void> {
+    const options: vscode.TextDocumentShowOptions = {
+      viewColumn: await this.groupBelow(),
+      preview: !('keep' in what && what.keep),
+      preserveFocus: true,
+    };
+    if ('file' in what) {
+      await vscode.window.showTextDocument(what.file, options);
+    } else {
+      await vscode.commands.executeCommand('vscode.diff', what.left, what.right, what.title, options);
+    }
+    // Making the group moved focus into it; the window is where the user was.
+    this.panel.reveal(this.panel.viewColumn, false);
+  }
+
+  /**
+   * Closes the preview diffs this window left beneath it, and so the group
+   * too when nothing else is in it - Visual Studio's diff goes with its
+   * window. A diff kept with a double click, or anything else the user opened
+   * there, is theirs and stays.
+   */
+  private closeDiffs(): void {
+    const group = this.diffGroup;
+    if (!group || !vscode.window.tabGroups.all.includes(group)) {
+      return;
+    }
+    const previews = group.tabs.filter(
+      (tab) =>
+        tab.isPreview &&
+        ((tab.input instanceof vscode.TabInputTextDiff &&
+          tab.input.original.scheme === BLOB_SCHEME) ||
+          (tab.input instanceof vscode.TabInputText && tab.input.uri.scheme === BLOB_SCHEME))
+    );
+    if (previews.length) {
+      void vscode.window.tabGroups.close(previews, true);
+    }
   }
 
   private async showCommit(hash: string): Promise<void> {
@@ -1108,7 +1137,6 @@ export class RepositoryWindow {
 <script nonce="${nonce}" src="${asset('virtual.js')}"></script>
 <script nonce="${nonce}" src="${asset('graphview.js')}"></script>
 <script nonce="${nonce}" src="${asset('diffview.js')}"></script>
-<script nonce="${nonce}" src="${asset('syntax.js')}"></script>
 <script nonce="${nonce}" src="${asset('repo.js')}"></script>
 </body>
 </html>`;
