@@ -43,6 +43,47 @@ export function isUnder(filePath: string, folder: string): boolean {
   return filePath.startsWith(folder.endsWith('/') ? folder : `${folder}/`);
 }
 
+/** What discarding everything under one folder will do. */
+export interface FolderDiscard {
+  /** Distinct paths with a change, staged or not. */
+  affected: number;
+  /** Paths that will be deleted rather than reverted; see planFolderDiscard. */
+  newFiles: string[];
+  /** Whether anything needs reverting to HEAD with checkout. */
+  revert: boolean;
+}
+
+/**
+ * Splits a folder's changes into what is reverted and what is deleted.
+ *
+ * A file git does not track has nothing to revert to, so discarding it means
+ * deleting it - and so does a staged addition, which is untracked again once
+ * unstaged. Everything else is reverted to HEAD, which needs something in
+ * HEAD: a folder whose only staged changes are additions has nothing there,
+ * and `git checkout -- folder` fails on a pathspec matching nothing tracked.
+ */
+export function planFolderDiscard(
+  unstaged: FileChange[],
+  staged: FileChange[],
+  folder: string
+): FolderDiscard {
+  const inFolder = (change: FileChange) => isUnder(change.path, folder);
+  const isNew = (change: FileChange) =>
+    change.status === 'untracked' || change.status === 'ignored';
+  const mine = unstaged.filter(inFolder);
+  const mineStaged = staged.filter(inFolder);
+
+  const newFiles = new Set(
+    [...mine.filter(isNew), ...mineStaged.filter((c) => c.status === 'added')].map((c) => c.path)
+  );
+  return {
+    affected: new Set([...mine, ...mineStaged].map((c) => c.path)).size,
+    newFiles: [...newFiles],
+    revert:
+      mine.some((c) => !isNew(c)) || mineStaged.some((c) => c.status !== 'added'),
+  };
+}
+
 /**
  * The absolute path of a repository-relative path, or undefined when it would
  * land outside the repository or on its root.

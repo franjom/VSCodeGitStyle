@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 
-const { buildTree, isUnder, resolveInside, ROOT } = require('../out/git/tree.js');
+const { buildTree, isUnder, planFolderDiscard, resolveInside, ROOT } = require('../out/git/tree.js');
 
 const SEP = String.fromCharCode(92); // backslash, as shown on Windows
 
@@ -159,4 +159,44 @@ test('the repository root itself is not a file to act on', () => {
 
 test('a name that merely begins with two dots is still inside', () => {
   assert.equal(resolveInside(REPO, '..notes'), path.join(REPO, '..notes'));
+});
+
+// -------------------------------------------------------- planFolderDiscard
+
+test('an untracked file in the folder is deleted, not reverted', () => {
+  const plan = planFolderDiscard([change('src/new.cs', 'untracked')], [], 'src');
+  assert.deepEqual(plan.newFiles, ['src/new.cs']);
+  assert.equal(plan.revert, false);
+  assert.equal(plan.affected, 1);
+});
+
+test('a staged addition is deleted with the untracked files, not reverted', () => {
+  // Unstaged, it is untracked again; and checkout would fail on a folder
+  // holding nothing but additions.
+  const plan = planFolderDiscard([], [change('src/added.cs', 'added')], 'src');
+  assert.deepEqual(plan.newFiles, ['src/added.cs']);
+  assert.equal(plan.revert, false);
+});
+
+test('a modified or staged-deleted file is reverted', () => {
+  assert.equal(planFolderDiscard([change('src/a.cs', 'modified')], [], 'src').revert, true);
+  assert.equal(planFolderDiscard([], [change('src/b.cs', 'deleted')], 'src').revert, true);
+});
+
+test('a file staged and edited again counts once', () => {
+  const plan = planFolderDiscard(
+    [change('src/both.cs', 'modified')],
+    [change('src/both.cs', 'modified')],
+    'src'
+  );
+  assert.equal(plan.affected, 1);
+});
+
+test('changes outside the folder are not part of its discard', () => {
+  const plan = planFolderDiscard(
+    [change('src2/new.cs', 'untracked'), change('other/a.cs', 'modified')],
+    [change('other/b.cs', 'added')],
+    'src'
+  );
+  assert.deepEqual(plan, { affected: 0, newFiles: [], revert: false });
 });

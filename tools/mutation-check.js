@@ -24,6 +24,7 @@ const DIFFVIEW_JS = path.join(ROOT, 'media', 'diffview.js');
 const CHANGESVIEW_JS = path.join(ROOT, 'media', 'changesview.js');
 const REFNAMES_TS = path.join(ROOT, 'src', 'git', 'refNames.ts');
 const COMPARE_TS = path.join(ROOT, 'src', 'git', 'compare.ts');
+const COMMIT_MESSAGE_TS = path.join(ROOT, 'src', 'commitMessage.ts');
 
 const MUTATIONS = [
   {
@@ -102,6 +103,47 @@ const MUTATIONS = [
     file: TREE_TS,
     from: '  if (folder === ROOT) {\n    return true;\n  }',
     to: '  if (false) {\n    return true;\n  }',
+  },
+  {
+    // An estimate landing just over the model's limit fails the request.
+    label: 'a diff cut to the budget with no margin',
+    file: COMMIT_MESSAGE_TS,
+    from: '  const keep = Math.floor((diff.length * budget * 0.9) / tokens);',
+    to: '  const keep = Math.floor((diff.length * budget) / tokens);',
+  },
+  {
+    label: 'a diff cut mid-line',
+    file: COMMIT_MESSAGE_TS,
+    from: '  return diff.slice(0, lineEnd > 0 ? lineEnd + 1 : keep) + TRUNCATED_NOTE;',
+    to: '  return diff.slice(0, keep) + TRUNCATED_NOTE;',
+  },
+  {
+    // A nested repository binned with its whole history.
+    label: 'a nested repository listed for the bin',
+    file: GIT_TS,
+    from: "      const nested = entry.endsWith('/')",
+    to: "      const nested = false && entry.endsWith('/')",
+  },
+  {
+    // Ignored files binned, which git clean leaves without -x.
+    label: 'a folder discard listing ignored files',
+    file: GIT_TS,
+    from: "      '--exclude-standard',\n      '--directory',",
+    to: "      '--directory',",
+  },
+  {
+    // A staged addition left on disk once unstaged.
+    label: 'a staged addition not counted as a new file',
+    file: TREE_TS,
+    from: "    [...mine.filter(isNew), ...mineStaged.filter((c) => c.status === 'added')].map((c) => c.path)",
+    to: '    mine.filter(isNew).map((c) => c.path)',
+  },
+  {
+    // checkout run on a folder holding only additions, which fails.
+    label: 'a staged addition taken for something to revert',
+    file: TREE_TS,
+    from: "mineStaged.some((c) => c.status !== 'added')",
+    to: 'mineStaged.length > 0',
   },
   {
     // An added file shown against an empty document, labelled modified.

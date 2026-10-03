@@ -314,25 +314,93 @@ test('a pre-commit hook that refuses is reported in its own words', async (t) =>
   });
 });
 
-test('discard reverts a tracked file and deletes an untracked one', async (t) => {
+test('discard reverts a tracked file', async (t) => {
   const repo = new TestRepo();
   t.after(() => repo.dispose());
   repo.write('tracked.txt', 'base\n');
   repo.commit('Initial');
   repo.write('tracked.txt', 'edited\n');
-  repo.write('fresh.txt', 'new\n');
 
   const snapshot = await git.snapshot(repo.dir, false);
-  const tracked = snapshot.unstaged.find((c) => c.path === 'tracked.txt');
-  const untracked = snapshot.unstaged.find((c) => c.path === 'fresh.txt');
-
-  await git.discard(repo.dir, tracked);
-  await git.discard(repo.dir, untracked);
+  await git.discard(repo.dir, snapshot.unstaged.find((c) => c.path === 'tracked.txt'));
 
   assert.equal(repo.read('tracked.txt'), 'base\n');
   const after = await git.snapshot(repo.dir, false);
   assert.equal(after.unstaged.length, 0);
   assert.equal(after.staged.length, 0);
+});
+
+test('discard leaves an untracked file for the bin rather than deleting it for good', async (t) => {
+  const repo = new TestRepo();
+  t.after(() => repo.dispose());
+  repo.write('tracked.txt', 'base\n');
+  repo.commit('Initial');
+  repo.write('fresh.txt', 'new\n');
+
+  const snapshot = await git.snapshot(repo.dir, false);
+  const untracked = snapshot.unstaged.find((c) => c.path === 'fresh.txt');
+
+  await assert.rejects(git.discard(repo.dir, untracked), /not tracked/);
+  assert.equal(repo.read('fresh.txt'), 'new\n', 'still on disk');
+});
+
+// ------------------------------------------------------- untrackedToRemove
+
+/** Untracked files in a folder, a wholly untracked directory, and more. */
+function repoWithUntrackedFolder() {
+  const repo = new TestRepo();
+  repo.write('src/kept.cs', 'tracked\n');
+  repo.write('other/kept.cs', 'tracked\n');
+  repo.write('.gitignore', '*.log\n');
+  repo.commit('Initial');
+  repo.write('src/loose.cs', 'new\n');
+  repo.write('src/fresh/a.cs', 'new\n');
+  repo.write('src/fresh/deeper/b.cs', 'new\n');
+  repo.write('src/build.log', 'ignored\n');
+  repo.write('other/elsewhere.cs', 'new\n');
+  return repo;
+}
+
+test('a folder discard removes its untracked files, a new directory as one entry', async (t) => {
+  const repo = repoWithUntrackedFolder();
+  t.after(() => repo.dispose());
+  assert.deepEqual((await git.untrackedToRemove(repo.dir, 'src')).sort(), [
+    'src/fresh',
+    'src/loose.cs',
+  ]);
+});
+
+test('a folder discard leaves ignored files and files outside the folder alone', async (t) => {
+  const repo = repoWithUntrackedFolder();
+  t.after(() => repo.dispose());
+  const entries = await git.untrackedToRemove(repo.dir, 'src');
+  assert.ok(!entries.includes('src/build.log'), 'clean leaves ignored files without -x');
+  assert.ok(!entries.some((e) => e.startsWith('other/')));
+});
+
+test('the repository root, spelled ".", takes every untracked file', async (t) => {
+  const repo = repoWithUntrackedFolder();
+  t.after(() => repo.dispose());
+  assert.deepEqual((await git.untrackedToRemove(repo.dir, '.')).sort(), [
+    'other/elsewhere.cs',
+    'src/fresh',
+    'src/loose.cs',
+  ]);
+});
+
+test('a nested repository is never binned with the folder that holds it', async (t) => {
+  // git clean -fd refuses one without a second -f; binning it would take its
+  // whole history.
+  const repo = repoWithUntrackedFolder();
+  t.after(() => repo.dispose());
+  const nested = path.join(repo.dir, 'src', 'vendored');
+  fs.mkdirSync(nested, { recursive: true });
+  require('node:child_process').execFileSync('git', ['init', '-q'], { cwd: nested });
+  fs.writeFileSync(path.join(nested, 'lib.cs'), 'x\n');
+
+  const entries = await git.untrackedToRemove(repo.dir, 'src');
+  assert.ok(!entries.some((e) => e.startsWith('src/vendored')), entries.join(', '));
+  assert.ok(entries.includes('src/loose.cs'), 'the rest of the folder still goes');
 });
 
 test('the graph of a real merge keeps every line continuous', async (t) => {

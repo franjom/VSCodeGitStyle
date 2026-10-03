@@ -315,6 +315,11 @@ export class Git {
       ? ['diff', '--cached', '--no-color', '--unified=1']
       : ['diff', 'HEAD', '--no-color', '--unified=1'];
     const diff = (await this.tryExec(root, args)) ?? '';
+    // A bound on the work before the model is involved: the diff is counted by
+    // the model's tokenizer and fitted to its limit afterwards (fitDiff), and
+    // counting a diff of a vendored library would cost more than the message
+    // is worth. 24,000 characters is several thousand tokens - more than a
+    // commit message needs to see the shape of a change.
     return diff.slice(0, 24_000);
   }
 
@@ -332,15 +337,58 @@ export class Git {
     return this.exec(root, ['add', '-A']);
   }
 
+  /**
+   * Reverts a tracked file to HEAD. An untracked or ignored file has nothing to
+   * revert to, so discarding one means deleting it, and that is the view's to
+   * do through VS Code's bin rather than git's: `git clean` deletes for good,
+   * and without -x it quietly leaves an ignored file where it is.
+   */
   async discard(root: string, change: FileChange): Promise<void> {
     if (change.status === 'untracked' || change.status === 'ignored') {
-      await this.exec(root, ['clean', '-f', '--', change.path]);
-      return;
+      throw new Error(`${change.path} is not tracked; there is nothing to revert it to.`);
     }
     if (change.staged) {
       await this.exec(root, ['reset', '-q', 'HEAD', '--', change.path]);
     }
     await this.exec(root, ['checkout', '-q', '--', change.path]);
+  }
+
+  /**
+   * What discarding a folder deletes: its untracked files, as `git clean -fd`
+   * would remove them, for moving to the bin instead.
+   *
+   * --directory folds a wholly untracked directory into one entry, so it goes
+   * to the bin whole - one thing to restore, and no empty directories left
+   * behind, which git clean -d would not have left either. Ignored files are
+   * not listed, as clean leaves them without -x. A nested repository is
+   * listed by git as an untracked directory, but clean -d refuses to remove
+   * one without a second -f, and binning it would take its whole history; so
+   * it is left out here too.
+   */
+  async untrackedToRemove(root: string, folder: string): Promise<string[]> {
+    const out = await this.exec(root, [
+      'ls-files',
+      '-z',
+      '--others',
+      '--exclude-standard',
+      '--directory',
+      '--',
+      folder,
+    ]);
+    const entries = out.split(SEPARATOR).filter((entry) => entry !== '');
+    const kept: string[] = [];
+    for (const entry of entries) {
+      const nested = entry.endsWith('/')
+        ? await fs
+            .stat(path.join(root, entry, '.git'))
+            .then(() => true)
+            .catch(() => false)
+        : false;
+      if (!nested) {
+        kept.push(entry.replace(/\/$/, ''));
+      }
+    }
+    return kept;
   }
 
   /**

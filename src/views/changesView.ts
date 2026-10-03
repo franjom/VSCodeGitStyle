@@ -3,8 +3,9 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { countChanges, Git, RepoSnapshot } from '../git/git';
 import { ApiRepository, GitApi } from '../gitExtension';
-import { buildTree, isUnder, resolveInside, ROOT, TreeNode } from '../git/tree';
+import { buildTree, isUnder, planFolderDiscard, resolveInside, ROOT, TreeNode } from '../git/tree';
 import { newNonce } from './nonce';
+import { COMMIT_MESSAGE_PROMPT, fitDiff } from '../commitMessage';
 
 /** VS Code's own git blame toggle, present from 1.96. */
 const BLAME_COMMAND = 'git.blame.toggleEditorDecoration';
@@ -72,6 +73,8 @@ export class ChangesViewProvider implements vscode.WebviewViewProvider {
   /** Git work under way, for the activity bar spinner; see beginWork(). */
   private inFlight = 0;
   private endProgress?: () => void;
+  /** The commit message request in flight, if any; see generateMessage(). */
+  private generation?: vscode.CancellationTokenSource;
   private readonly repoListeners = new Map<string, vscode.Disposable>();
   private readonly disposables: vscode.Disposable[] = [];
 
@@ -129,6 +132,7 @@ export class ChangesViewProvider implements vscode.WebviewViewProvider {
     // the provider that started it.
     this.endProgress?.();
     this.endProgress = undefined;
+    this.generation?.cancel();
   }
 
   private watch(repo: ApiRepository): void {
@@ -576,56 +580,85 @@ export class ChangesViewProvider implements vscode.WebviewViewProvider {
     await this.git.ignoreAndUntrack(root, relPath);
   }
 
-  /**
-   * Deletes the file on disk the way the Explorer's own Delete does.
-   *
-   * That means a workspace edit, not workspace.fs. The Explorer goes through
-   * the same bulk edit (`applyBulkEdit` in the shipped workbench bundle), and
-   * only that path fires onWillDeleteFiles/onDidDeleteFiles for other
-   * extensions; workspace.fs is documented as firing neither. It also settles
-   * the two things this dialog has to state honestly:
-   *
-   *   useTrash: !skipTrashBin && hasCapability(uri, Trash)
-   *             && getValue("files.enableTrash")
-   *
-   * so the bin is used exactly when the user's setting says so, and before
-   * deleting it soft-reverts any editor holding unsaved changes to the file -
-   * those edits are gone, not saved, so the dialog says so first.
-   */
   private async deleteFile(root: string, relPath: string): Promise<void> {
-    const target = resolveInside(root, relPath);
-    if (!target) {
-      throw new Error(`${relPath} is not inside the repository.`);
-    }
-    const uri = vscode.Uri.file(target);
-    const toBin = vscode.workspace
-      .getConfiguration('files')
-      .get<boolean>('enableTrash', true);
-    const bin = process.platform === 'win32' ? 'Recycle Bin' : 'Trash';
-    const unsaved = vscode.workspace.textDocuments.some(
-      (doc) => doc.isDirty && doc.uri.toString() === uri.toString()
-    );
-
-    const fate = toBin
-      ? `${relPath} will be moved to the ${bin}.`
-      : `${relPath} will be deleted permanently.`;
+    const fate = this.binFate(relPath);
     const choice = await vscode.window.showWarningMessage(
       `Delete ${path.basename(relPath)}?`,
       {
         modal: true,
-        detail: unsaved ? `${fate} Its unsaved changes will be lost.` : fate,
+        detail: this.hasUnsavedChanges(root, [relPath])
+          ? `${fate} Its unsaved changes will be lost.`
+          : fate,
       },
       'Delete'
     );
     if (choice !== 'Delete') {
       return;
     }
+    await this.moveToBin(root, [relPath]);
+  }
 
+  /**
+   * Deletes files and folders on disk the way the Explorer's own Delete does.
+   *
+   * That means a workspace edit, not workspace.fs. The Explorer goes through
+   * the same bulk edit (`applyBulkEdit` in the shipped workbench bundle), and
+   * only that path fires onWillDeleteFiles/onDidDeleteFiles for other
+   * extensions; workspace.fs is documented as firing neither. It also settles
+   * the two things a confirmation has to state honestly:
+   *
+   *   useTrash: !skipTrashBin && hasCapability(uri, Trash)
+   *             && getValue("files.enableTrash")
+   *
+   * so the bin is used exactly when the user's setting says so (binFate), and
+   * before deleting it soft-reverts any editor holding unsaved changes to a
+   * file - those edits are gone, not saved (hasUnsavedChanges).
+   *
+   * Every path came from the webview, so each must resolve inside the
+   * repository before anything is deleted. A path already gone is passed
+   * over: the list it came from can be a moment out of date.
+   */
+  private async moveToBin(root: string, relPaths: string[]): Promise<void> {
     const edit = new vscode.WorkspaceEdit();
-    edit.deleteFile(uri);
-    if (!(await vscode.workspace.applyEdit(edit))) {
-      throw new Error(`${relPath} could not be deleted.`);
+    for (const relPath of relPaths) {
+      const target = resolveInside(root, relPath);
+      if (!target) {
+        throw new Error(`${relPath} is not inside the repository.`);
+      }
+      edit.deleteFile(vscode.Uri.file(target), { recursive: true, ignoreIfNotExists: true });
     }
+    if (!(await vscode.workspace.applyEdit(edit))) {
+      throw new Error(
+        relPaths.length === 1
+          ? `${relPaths[0]} could not be deleted.`
+          : `${relPaths.length} files could not be deleted.`
+      );
+    }
+  }
+
+  /** What moveToBin will do with `what`, as the user's files.enableTrash decides. */
+  private binFate(what: string): string {
+    const toBin = vscode.workspace
+      .getConfiguration('files')
+      .get<boolean>('enableTrash', true);
+    const bin = process.platform === 'win32' ? 'Recycle Bin' : 'Trash';
+    return toBin ? `${what} will be moved to the ${bin}.` : `${what} will be deleted permanently.`;
+  }
+
+  /** Whether an open editor holds unsaved changes to any of these, or beneath them. */
+  private hasUnsavedChanges(root: string, relPaths: string[]): boolean {
+    const targets = relPaths
+      .map((relPath) => resolveInside(root, relPath))
+      .filter((target): target is string => target !== undefined)
+      .map((target) => vscode.Uri.file(target).fsPath);
+    return vscode.workspace.textDocuments.some(
+      (doc) =>
+        doc.isDirty &&
+        doc.uri.scheme === 'file' &&
+        targets.some(
+          (target) => doc.uri.fsPath === target || doc.uri.fsPath.startsWith(target + path.sep)
+        )
+    );
   }
 
   private async discard(root: string, relPath: string): Promise<void> {
@@ -639,13 +672,19 @@ export class ChangesViewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
+    // A file git does not track has nothing to revert to, so discarding it
+    // deletes it - to the bin, as Delete does, since git holds no copy of it.
+    const untracked = change.status === 'untracked' || change.status === 'ignored';
     const confirm = vscode.workspace
       .getConfiguration('vsGitStyle')
       .get<boolean>('confirmDiscard', true);
     if (confirm) {
       const answer = await vscode.window.showWarningMessage(
-        `Discard changes in ${change.path}? This cannot be undone.`,
-        { modal: true },
+        `Discard changes in ${change.path}?`,
+        {
+          modal: true,
+          detail: untracked ? this.binFate(change.path) : 'This cannot be undone.',
+        },
         'Discard Changes'
       );
       if (answer !== 'Discard Changes') {
@@ -653,38 +692,40 @@ export class ChangesViewProvider implements vscode.WebviewViewProvider {
       }
     }
 
+    if (untracked) {
+      await this.moveToBin(root, [change.path]);
+      return;
+    }
     await this.git.discard(root, change);
   }
 
   /**
    * Reverts every change under one folder. Untracked files inside it can only
    * be "reverted" by deleting them, so they are counted separately and spelled
-   * out in the prompt rather than quietly removed.
+   * out in the prompt rather than quietly removed - and they go to the bin,
+   * where `git clean` used to delete them for good, because git holds no copy
+   * of them to get them back from.
    */
   private async discardFolder(root: string, folder: string): Promise<void> {
     const snapshot = await this.git.snapshot(root, false);
-    const inFolder = (change: { path: string }) => isUnder(change.path, folder);
-
-    const unstaged = snapshot.unstaged.filter(inFolder);
-    const staged = snapshot.staged.filter(inFolder);
-    const untracked = unstaged.filter(
-      (c) => c.status === 'untracked' || c.status === 'ignored'
-    );
-    const tracked = unstaged.filter((c) => !untracked.includes(c));
-
-    const affected = new Set([...unstaged, ...staged].map((c) => c.path));
-    if (affected.size === 0) {
+    const plan = planFolderDiscard(snapshot.unstaged, snapshot.staged, folder);
+    if (plan.affected === 0) {
       return;
     }
 
     // The root row is asked for as ".", which would read as a typo in a prompt.
     const where = folder === ROOT ? 'the repository' : folder;
     const lines = [`Discard all changes in ${where}?`, ''];
-    lines.push(`${affected.size} file(s) affected.`);
-    if (untracked.length) {
-      lines.push(`${untracked.length} untracked file(s) will be deleted.`);
+    lines.push(`${plan.affected} file(s) affected.`);
+    if (plan.revert) {
+      lines.push('Changes to tracked files cannot be undone.');
     }
-    lines.push('This cannot be undone.');
+    if (plan.newFiles.length) {
+      lines.push(this.binFate(`${plan.newFiles.length} new file(s)`));
+      if (this.hasUnsavedChanges(root, plan.newFiles)) {
+        lines.push('Unsaved changes to them will be lost.');
+      }
+    }
 
     const answer = await vscode.window.showWarningMessage(
       lines[0],
@@ -695,16 +736,18 @@ export class ChangesViewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    if (staged.length) {
+    if (snapshot.staged.some((c) => isUnder(c.path, folder))) {
       await this.git.unstage(root, [folder]);
     }
-    if (tracked.length || staged.length) {
-      // checkout fails on a pathspec matching nothing git tracks, so only run
-      // it when the folder actually holds tracked changes.
+    if (plan.revert) {
       await this.git.exec(root, ['checkout', '-q', '--', folder]);
     }
-    if (untracked.length) {
-      await this.git.exec(root, ['clean', '-fdq', '--', folder]);
+    if (plan.newFiles.length) {
+      // Asked after the unstage, so the additions are listed with the rest.
+      const toBin = await this.git.untrackedToRemove(root, folder);
+      if (toBin.length) {
+        await this.moveToBin(root, toBin);
+      }
     }
   }
 
@@ -799,8 +842,13 @@ export class ChangesViewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    const models = await vscode.lm.selectChatModels({});
-    if (models.length === 0) {
+    // Copilot when it is there, so the choice does not depend on the order
+    // providers registered in; any other provider when it is not.
+    const [model] = [
+      ...(await vscode.lm.selectChatModels({ vendor: 'copilot' })),
+      ...(await vscode.lm.selectChatModels({})),
+    ];
+    if (!model) {
       void vscode.window.showInformationMessage(
         'No language model is available. Install and sign in to a chat provider to generate commit messages.'
       );
@@ -813,30 +861,46 @@ export class ChangesViewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
+    // A second press replaces the first request rather than racing it, and
+    // closing the view stops one in flight; see dispose().
+    this.generation?.cancel();
+    const generation = new vscode.CancellationTokenSource();
+    this.generation = generation;
+    const token = generation.token;
+
     this.post({ type: 'generating', generating: true });
     try {
-      const response = await models[0].sendRequest(
-        [
-          vscode.LanguageModelChatMessage.User(
-            'Write a git commit message for the diff below. Use a short imperative subject ' +
-              'line of at most 72 characters. Add a blank line and a brief body only if the ' +
-              'change is not self-explanatory. Reply with the message only.\n\n' +
-              diff
-          ),
-        ],
+      // The diff is sized against the model's own limit, counted by its own
+      // tokenizer; a request over maxInputTokens fails outright.
+      const budget =
+        model.maxInputTokens -
+        (await model.countTokens(COMMIT_MESSAGE_PROMPT, token)) -
+        MESSAGE_OVERHEAD_TOKENS;
+      const fitted = fitDiff(diff, await model.countTokens(diff, token), budget);
+
+      const response = await model.sendRequest(
+        [vscode.LanguageModelChatMessage.User(COMMIT_MESSAGE_PROMPT + fitted)],
         {},
-        new vscode.CancellationTokenSource().token
+        token
       );
 
       let text = '';
       for await (const fragment of response.text) {
         text += fragment;
       }
-      this.post({ type: 'message', message: text.trim() });
+      if (!token.isCancellationRequested) {
+        this.post({ type: 'message', message: text.trim() });
+      }
     } catch (err) {
-      void vscode.window.showErrorMessage(describe(err));
+      if (!token.isCancellationRequested) {
+        void vscode.window.showErrorMessage(describeModelError(err));
+      }
     } finally {
-      this.post({ type: 'generating', generating: false });
+      if (this.generation === generation) {
+        this.generation = undefined;
+        this.post({ type: 'generating', generating: false });
+      }
+      generation.dispose();
     }
   }
 
@@ -868,6 +932,31 @@ export class ChangesViewProvider implements vscode.WebviewViewProvider {
 </body>
 </html>`;
   }
+}
+
+/**
+ * Room left for what wraps the prompt in a chat request - the role and
+ * message framing a provider adds, which countTokens on the text does not see.
+ * A few dozen tokens in practice; this leaves a margin rather than fail on it.
+ */
+const MESSAGE_OVERHEAD_TOKENS = 100;
+
+/**
+ * The language model's failures in words that say what to do. The API names
+ * them by code; the message it carries is written for developers.
+ */
+function describeModelError(err: unknown): string {
+  if (err instanceof vscode.LanguageModelError) {
+    switch (err.code) {
+      case vscode.LanguageModelError.NoPermissions.name:
+        return 'VS Git Style has not been allowed to use the language model. Allow it when VS Code asks, then try again.';
+      case vscode.LanguageModelError.Blocked.name:
+        return 'The language model refused the request, possibly for a usage limit. Try again later.';
+      case vscode.LanguageModelError.NotFound.name:
+        return 'The language model is no longer available. Check the chat provider is installed and signed in.';
+    }
+  }
+  return describe(err);
 }
 
 function describe(err: unknown): string {
