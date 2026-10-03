@@ -72,6 +72,12 @@
       }
     ],
     "menus": {
+      "commandPalette": [
+        {
+          "command": "vsGitStyle.openRepositoryWindow",
+          "when": "gitOpenRepositoryCount != 0"
+        }
+      ],
       "view/title": [
         {
           "command": "vsGitStyle.refresh",
@@ -89,7 +95,7 @@
           "description": "Ask for confirmation before discarding changes to a file."
         },
         "vsGitStyle.graphPageSize": {
-          "type": "number",
+          "type": "integer",
           "default": 200,
           "minimum": 20,
           "maximum": 2000,

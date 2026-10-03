@@ -29,14 +29,35 @@ export interface GitExtensionExports {
   getAPI(version: 1): GitApi;
 }
 
-export async function activateGitApi(): Promise<GitApi | undefined> {
+/**
+ * Calls `start` with the git API as soon as there is one: at once if git is
+ * enabled, otherwise the moment `git.enabled` is switched on. Without the wait
+ * a session that started with git off stayed inert until the window was
+ * reloaded, however long git had been back on.
+ *
+ * Resolves to what happened, so the caller can say why nothing is showing yet.
+ */
+export async function whenGitApiReady(
+  context: vscode.ExtensionContext,
+  start: (api: GitApi) => void
+): Promise<'started' | 'waiting' | 'missing'> {
   const extension = vscode.extensions.getExtension<GitExtensionExports>('vscode.git');
   if (!extension) {
-    return undefined;
+    return 'missing';
   }
   const exports = extension.isActive ? extension.exports : await extension.activate();
-  if (!exports.enabled) {
-    return undefined;
+  if (exports.enabled) {
+    start(exports.getAPI(1));
+    return 'started';
   }
-  return exports.getAPI(1);
+  const waiting = exports.onDidChangeEnablement((enabled) => {
+    if (enabled) {
+      // Disposed before starting, so switching git off and on again later
+      // cannot start everything a second time.
+      waiting.dispose();
+      start(exports.getAPI(1));
+    }
+  });
+  context.subscriptions.push(waiting);
+  return 'waiting';
 }

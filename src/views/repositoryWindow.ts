@@ -24,6 +24,7 @@ import {
 import { ApiRepository, GitApi } from '../gitExtension';
 import { readWorktrees, samePath, Worktree } from '../git/worktrees';
 import { BLOB_SCHEME, COMMIT_SCHEME } from './contentProviders';
+import { newNonce } from './nonce';
 import {
   GraphModel,
   readCommitDetails,
@@ -192,20 +193,38 @@ export class RepositoryWindow {
     // The other worktrees' changes are drawn in the branch pane too, so an
     // edit in one VS Code has open as its own repository is a reason to reload.
     // One it has not opened sends nothing; that is caught up on the next load.
+    // Keyed by root and dropped on close: a repository closed and opened again
+    // would otherwise gain a second listener, and every reopening another.
+    const others = new Map<string, vscode.Disposable>();
     const watch = (other: ApiRepository) => {
-      if (other === repository) {
+      const key = other.rootUri.fsPath;
+      if (other === repository || others.has(key)) {
         return;
       }
-      this.disposables.push(
+      others.set(
+        key,
         other.state.onDidChange(() => {
-          if (this.worktrees.some((w) => samePath(w.path, other.rootUri.fsPath, IGNORE_CASE))) {
+          if (this.worktrees.some((w) => samePath(w.path, key, IGNORE_CASE))) {
             this.scheduleLoad();
           }
         })
       );
     };
     gitApi.repositories.forEach(watch);
-    this.disposables.push(gitApi.onDidOpenRepository(watch));
+    this.disposables.push(
+      gitApi.onDidOpenRepository(watch),
+      gitApi.onDidCloseRepository((other) => {
+        const key = other.rootUri.fsPath;
+        others.get(key)?.dispose();
+        others.delete(key);
+      }),
+      new vscode.Disposable(() => {
+        for (const listener of others.values()) {
+          listener.dispose();
+        }
+        others.clear();
+      })
+    );
     this.disposables.push(
       this.panel.onDidChangeViewState(() => {
         if (this.panel.visible) {
@@ -1062,11 +1081,7 @@ export class RepositoryWindow {
   private html(webview: vscode.Webview): string {
     const asset = (...parts: string[]) =>
       webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'media', ...parts));
-    const nonce = Array.from({ length: 32 }, () =>
-      'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'.charAt(
-        Math.floor(Math.random() * 62)
-      )
-    ).join('');
+    const nonce = newNonce();
 
     return `<!DOCTYPE html>
 <html lang="en">

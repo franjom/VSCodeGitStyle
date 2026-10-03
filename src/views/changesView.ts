@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 import { countChanges, Git, RepoSnapshot } from '../git/git';
 import { ApiRepository, GitApi } from '../gitExtension';
 import { buildTree, isUnder, resolveInside, ROOT, TreeNode } from '../git/tree';
+import { newNonce } from './nonce';
 
 /** VS Code's own git blame toggle, present from 1.96. */
 const BLAME_COMMAND = 'git.blame.toggleEditorDecoration';
@@ -831,7 +832,7 @@ export class ChangesViewProvider implements vscode.WebviewViewProvider {
   private html(webview: vscode.Webview): string {
     const asset = (...parts: string[]) =>
       webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'media', ...parts));
-    const nonce = nonceString();
+    const nonce = newNonce();
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -854,15 +855,6 @@ export class ChangesViewProvider implements vscode.WebviewViewProvider {
 </body>
 </html>`;
   }
-}
-
-function nonceString(): string {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  let out = '';
-  for (let i = 0; i < 32; i++) {
-    out += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return out;
 }
 
 function describe(err: unknown): string {

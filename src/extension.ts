@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { ChangesViewProvider } from './views/changesView';
 import { Git } from './git/git';
 import { createDiagnostics, registerDiagnosticsCommand } from './diagnosticsFile';
-import { activateGitApi } from './gitExtension';
+import { GitApi, whenGitApiReady } from './gitExtension';
 import {
   BlobFileSystem,
   BLOB_SCHEME,
@@ -12,14 +12,17 @@ import {
 import { RepositoryWindow } from './views/repositoryWindow';
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  const api = await activateGitApi();
-  if (!api) {
+  const outcome = await whenGitApiReady(context, (api) => start(context, api));
+  if (outcome !== 'started') {
     void vscode.window.showWarningMessage(
-      'VS Git Style needs the built-in Git extension to be installed and enabled.'
+      outcome === 'missing'
+        ? 'VS Git Style needs the built-in Git extension to be installed and enabled.'
+        : 'VS Git Style will start once Git is enabled (the git.enabled setting).'
     );
-    return;
   }
+}
 
+function start(context: vscode.ExtensionContext, api: GitApi): void {
   const diagnostics = createDiagnostics(context);
   const git = new Git(api.git.path);
   const provider = new ChangesViewProvider(context.extensionUri, api, git);
