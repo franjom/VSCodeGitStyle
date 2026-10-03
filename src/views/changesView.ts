@@ -3,7 +3,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { countChanges, Git, RepoSnapshot } from '../git/git';
 import { ApiRepository, GitApi } from '../gitExtension';
-import { buildTree, isUnder, ROOT, TreeNode } from '../git/tree';
+import { buildTree, isUnder, resolveInside, ROOT, TreeNode } from '../git/tree';
 
 /** VS Code's own git blame toggle, present from 1.96. */
 const BLAME_COMMAND = 'git.blame.toggleEditorDecoration';
@@ -49,6 +49,7 @@ type Inbound =
   | { type: 'viewHistory'; path: string }
   | { type: 'blame'; path: string }
   | { type: 'ignoreAndUntrack'; path: string }
+  | { type: 'deleteFile'; path: string }
   | { type: 'discard'; path: string }
   | { type: 'discardFolder'; path: string }
   | { type: 'resolveConflict'; path: string; side: 'ours' | 'theirs' }
@@ -67,6 +68,9 @@ export class ChangesViewProvider implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView;
   private activeRoot?: string;
   private refreshTimer?: NodeJS.Timeout;
+  /** Git work under way, for the activity bar spinner; see beginWork(). */
+  private inFlight = 0;
+  private endProgress?: () => void;
   private readonly repoListeners = new Map<string, vscode.Disposable>();
   private readonly disposables: vscode.Disposable[] = [];
 
@@ -107,6 +111,10 @@ export class ChangesViewProvider implements vscode.WebviewViewProvider {
     if (this.refreshTimer) {
       clearTimeout(this.refreshTimer);
     }
+    // Work still in flight would otherwise hold the progress task open past
+    // the provider that started it.
+    this.endProgress?.();
+    this.endProgress = undefined;
   }
 
   private watch(repo: ApiRepository): void {
@@ -153,6 +161,52 @@ export class ChangesViewProvider implements vscode.WebviewViewProvider {
   }
 
   private async refresh(): Promise<void> {
+    if (!this.view) {
+      return;
+    }
+    const done = this.beginWork();
+    try {
+      await this.refreshNow();
+    } finally {
+      done();
+    }
+  }
+
+  /**
+   * The spinner the stock Source Control icon wears while git runs. There is no
+   * badge for it in the API: VS Code draws it over a view's activity bar icon
+   * while a progress task is reported against that view, so one task is held
+   * open for as long as anything is in flight. Opening one per operation would
+   * stack them, and the first to finish would not end the spinner.
+   *
+   * VS Code refuses a view whose pane does not exist yet, which is only a lost
+   * spinner, so the refusal is swallowed.
+   */
+  private beginWork(): () => void {
+    this.inFlight++;
+    if (this.inFlight === 1) {
+      vscode.window
+        .withProgress(
+          { location: { viewId: ChangesViewProvider.viewType } },
+          () => new Promise<void>((resolve) => (this.endProgress = resolve))
+        )
+        .then(undefined, () => undefined);
+    }
+    let finished = false;
+    return () => {
+      if (finished) {
+        return;
+      }
+      finished = true;
+      this.inFlight--;
+      if (this.inFlight === 0) {
+        this.endProgress?.();
+        this.endProgress = undefined;
+      }
+    };
+  }
+
+  private async refreshNow(): Promise<void> {
     if (!this.view) {
       return;
     }
@@ -274,6 +328,7 @@ export class ChangesViewProvider implements vscode.WebviewViewProvider {
 
   private async handle(message: Inbound): Promise<void> {
     const root = this.activeRoot;
+    let done: (() => void) | undefined;
     try {
       switch (message.type) {
         case 'ready':
@@ -300,6 +355,7 @@ export class ChangesViewProvider implements vscode.WebviewViewProvider {
       }
 
       this.busy(true);
+      done = this.beginWork();
       switch (message.type) {
         case 'checkout':
           await this.git.checkout(root, message.branch);
@@ -354,6 +410,10 @@ export class ChangesViewProvider implements vscode.WebviewViewProvider {
           await this.ignoreAndUntrack(root, message.path);
           break;
 
+        case 'deleteFile':
+          await this.deleteFile(root, message.path);
+          break;
+
         case 'stage':
           await this.git.stage(root, message.paths);
           break;
@@ -405,6 +465,7 @@ export class ChangesViewProvider implements vscode.WebviewViewProvider {
       this.post({ type: 'error', message: describe(err) });
     } finally {
       this.busy(false);
+      done?.();
       this.scheduleRefresh(50);
     }
   }
@@ -499,6 +560,58 @@ export class ChangesViewProvider implements vscode.WebviewViewProvider {
       return;
     }
     await this.git.ignoreAndUntrack(root, relPath);
+  }
+
+  /**
+   * Deletes the file on disk the way the Explorer's own Delete does.
+   *
+   * That means a workspace edit, not workspace.fs. The Explorer goes through
+   * the same bulk edit (`applyBulkEdit` in the shipped workbench bundle), and
+   * only that path fires onWillDeleteFiles/onDidDeleteFiles for other
+   * extensions; workspace.fs is documented as firing neither. It also settles
+   * the two things this dialog has to state honestly:
+   *
+   *   useTrash: !skipTrashBin && hasCapability(uri, Trash)
+   *             && getValue("files.enableTrash")
+   *
+   * so the bin is used exactly when the user's setting says so, and before
+   * deleting it soft-reverts any editor holding unsaved changes to the file -
+   * those edits are gone, not saved, so the dialog says so first.
+   */
+  private async deleteFile(root: string, relPath: string): Promise<void> {
+    const target = resolveInside(root, relPath);
+    if (!target) {
+      throw new Error(`${relPath} is not inside the repository.`);
+    }
+    const uri = vscode.Uri.file(target);
+    const toBin = vscode.workspace
+      .getConfiguration('files')
+      .get<boolean>('enableTrash', true);
+    const bin = process.platform === 'win32' ? 'Recycle Bin' : 'Trash';
+    const unsaved = vscode.workspace.textDocuments.some(
+      (doc) => doc.isDirty && doc.uri.toString() === uri.toString()
+    );
+
+    const fate = toBin
+      ? `${relPath} will be moved to the ${bin}.`
+      : `${relPath} will be deleted permanently.`;
+    const choice = await vscode.window.showWarningMessage(
+      `Delete ${path.basename(relPath)}?`,
+      {
+        modal: true,
+        detail: unsaved ? `${fate} Its unsaved changes will be lost.` : fate,
+      },
+      'Delete'
+    );
+    if (choice !== 'Delete') {
+      return;
+    }
+
+    const edit = new vscode.WorkspaceEdit();
+    edit.deleteFile(uri);
+    if (!(await vscode.workspace.applyEdit(edit))) {
+      throw new Error(`${relPath} could not be deleted.`);
+    }
   }
 
   private async discard(root: string, relPath: string): Promise<void> {

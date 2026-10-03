@@ -2,8 +2,9 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const path = require('node:path');
 
-const { buildTree, isUnder, ROOT } = require('../out/git/tree.js');
+const { buildTree, isUnder, resolveInside, ROOT } = require('../out/git/tree.js');
 
 const SEP = String.fromCharCode(92); // backslash, as shown on Windows
 
@@ -135,4 +136,27 @@ test('a folder claims the files beneath it and nothing beside it', () => {
   assert.equal(isUnder('src/api/a.cs', 'src/'), true);
   assert.equal(isUnder('src2/a.cs', 'src'), false, 'a prefix of the name is not the folder');
   assert.equal(isUnder('a.cs', 'src'), false);
+});
+
+// ------------------------------------------------------------ resolveInside
+
+const REPO = path.resolve('repo');
+
+test('a path git listed resolves to the file inside the repository', () => {
+  assert.equal(resolveInside(REPO, 'src/api/a.cs'), path.join(REPO, 'src', 'api', 'a.cs'));
+});
+
+test('a path that climbs out of the repository resolves to nothing', () => {
+  assert.equal(resolveInside(REPO, '../outside.txt'), undefined);
+  assert.equal(resolveInside(REPO, 'src/../../outside.txt'), undefined);
+  assert.equal(resolveInside(REPO, path.resolve('elsewhere', 'a.txt')), undefined);
+});
+
+test('the repository root itself is not a file to act on', () => {
+  assert.equal(resolveInside(REPO, ''), undefined);
+  assert.equal(resolveInside(REPO, ROOT), undefined);
+});
+
+test('a name that merely begins with two dots is still inside', () => {
+  assert.equal(resolveInside(REPO, '..notes'), path.join(REPO, '..notes'));
 });

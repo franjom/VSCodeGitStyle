@@ -21,6 +21,7 @@ const VIRTUAL_JS = path.join(ROOT, 'media', 'virtual.js');
 const TREE_TS = path.join(ROOT, 'src', 'git', 'tree.ts');
 const WORKTREES_TS = path.join(ROOT, 'src', 'git', 'worktrees.ts');
 const DIFFVIEW_JS = path.join(ROOT, 'media', 'diffview.js');
+const CHANGESVIEW_JS = path.join(ROOT, 'media', 'changesview.js');
 
 const MUTATIONS = [
   {
@@ -101,6 +102,21 @@ const MUTATIONS = [
     to: '  if (false) {\n    return true;\n  }',
   },
   {
+    // A "../" from the webview would reach past the repository - and the
+    // delete it guards moves whatever it lands on to the bin.
+    label: 'a path climbing out of the repository accepted',
+    file: TREE_TS,
+    from: "  const escapes = fromRoot === '..' || fromRoot.startsWith(`..${path.sep}`);",
+    to: '  const escapes = false;',
+  },
+  {
+    // A file whose name starts with ".." refused as though it were outside.
+    label: 'a leading ".." in a name taken for a parent directory',
+    file: TREE_TS,
+    from: "  const escapes = fromRoot === '..' || fromRoot.startsWith(`..${path.sep}`);",
+    to: "  const escapes = fromRoot.startsWith('..');",
+  },
+  {
     label: 'a folder matched as a bare prefix (src claims src2)',
     file: TREE_TS,
     from: "  return filePath.startsWith(folder.endsWith('/') ? folder : `${folder}/`);",
@@ -125,6 +141,13 @@ const MUTATIONS = [
     file: WORKTREES_TS,
     from: "    if (change.status === 'deleted' && !byPath.has(change.path)) {",
     to: '    if (false) {',
+  },
+  {
+    // The entry would offer to bin a file that is no longer there.
+    label: 'Delete offered on a file already deleted',
+    file: CHANGESVIEW_JS,
+    from: "    return change.status === 'deleted' ? 'already deleted' : null;",
+    to: '    return null;',
   },
   {
     label: 'one shut folder shuts the same folder in every worktree',

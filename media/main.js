@@ -600,7 +600,11 @@
       run: function () { post({ type: 'revealInExplorer', path: node.key }); },
     });
 
-    // The label carries the reason, the way the branch and commit menus do.
+    return withReasons(items);
+  }
+
+  // The label carries the reason, the way the branch and commit menus do.
+  function withReasons(items) {
     return items.map(function (item) {
       if (item === '-' || !item.disabled) {
         return item;
@@ -821,6 +825,17 @@
     ignored: ['I', 'status-ignored', 'Ignored'],
   };
 
+  function deleteItem(change) {
+    const blocker = changesView.deleteBlocker(change);
+    return {
+      icon: 'trash',
+      label: 'Delete',
+      disabled: !!blocker,
+      why: blocker,
+      run: function () { post({ type: 'deleteFile', path: change.path }); },
+    };
+  }
+
   function fileRow(node, depth, kind) {
     const change = node.change;
     const isConflict = kind === 'conflicts';
@@ -922,7 +937,7 @@
         return;
       }
       // Ordered and grouped as Visual Studio's own file context menu is.
-      showMenu(event, [
+      showMenu(event, withReasons([
         {
           icon: 'go-to-file',
           label: 'Open',
@@ -961,6 +976,7 @@
           run: function () { post({ type: 'blame', path: change.path }); },
         },
         '-',
+        deleteItem(change),
         {
           icon: 'folder-opened',
           label: 'Reveal in File Explorer',
@@ -971,7 +987,7 @@
           label: 'Ignore and Untrack item',
           run: function () { post({ type: 'ignoreAndUntrack', path: change.path }); },
         },
-      ]);
+      ]));
     });
 
     return fileNode;

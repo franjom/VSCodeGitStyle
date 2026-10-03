@@ -46,9 +46,21 @@
     }
   }
 
+  /**
+   * Why a file's Delete is disabled, or null when it is not.
+   *
+   * A file deleted on disk is still listed - the deletion is its change - but
+   * there is nothing left to move to the bin. Untracked files are the ones the
+   * entry matters most for, since git holds no copy of them to undo with.
+   */
+  function deleteBlocker(change) {
+    return change.status === 'deleted' ? 'already deleted' : null;
+  }
+
   const api = {
     extensionOf: extensionOf,
     collectFolderKeys: collectFolderKeys,
+    deleteBlocker: deleteBlocker,
   };
 
   if (typeof module === 'object' && module.exports) {

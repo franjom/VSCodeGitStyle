@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { extensionOf, collectFolderKeys } = require('../media/changesview.js');
+const { extensionOf, collectFolderKeys, deleteBlocker } = require('../media/changesview.js');
 
 function folder(key, children) {
   return { kind: 'folder', key: key, children: children || [] };
@@ -71,4 +71,16 @@ test('collecting twice does not accumulate', () => {
   // It used to take the output array as an argument, which made that possible.
   const tree = [folder('src', [])];
   assert.deepEqual(collectFolderKeys(tree, ''), collectFolderKeys(tree, ''));
+});
+
+// --------------------------------------------------------------------- delete
+
+test('a file already deleted on disk cannot be deleted again, and says so', () => {
+  assert.equal(deleteBlocker({ path: 'a.cs', status: 'deleted' }), 'already deleted');
+});
+
+test('every other change can be deleted, untracked files above all', () => {
+  for (const status of ['modified', 'added', 'renamed', 'untracked']) {
+    assert.equal(deleteBlocker({ path: 'a.cs', status }), null, status);
+  }
 });

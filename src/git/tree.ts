@@ -1,3 +1,4 @@
+import * as path from 'path';
 import { FileChange } from '../git/git';
 
 export interface FolderNode {
@@ -40,6 +41,25 @@ export function isUnder(filePath: string, folder: string): boolean {
     return true;
   }
   return filePath.startsWith(folder.endsWith('/') ? folder : `${folder}/`);
+}
+
+/**
+ * The absolute path of a repository-relative path, or undefined when it would
+ * land outside the repository or on its root.
+ *
+ * Paths reach the extension from the webview, which renders what git listed
+ * but is not where trust ends: whatever acts on the file system with one must
+ * not be steerable out of the repository by a "../" in it.
+ */
+export function resolveInside(root: string, relPath: string): string | undefined {
+  const full = path.resolve(root, relPath);
+  const fromRoot = path.relative(root, full);
+  // Tested as a whole segment, so that a file named "..notes" is still inside.
+  const escapes = fromRoot === '..' || fromRoot.startsWith(`..${path.sep}`);
+  if (!fromRoot || escapes || path.isAbsolute(fromRoot)) {
+    return undefined;
+  }
+  return full;
 }
 
 interface Builder {
