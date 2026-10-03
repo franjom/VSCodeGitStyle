@@ -628,3 +628,51 @@ test('a folder with no history of its own comes back empty, not broken', async (
   const graph = await readGraph(git, repo.dir, 'main', 50, 'never/existed');
   assert.deepEqual(graph.rows, []);
 });
+
+// ------------------------------------------------------------ blobs and revs
+
+test('a file saved in another encoding comes back as the bytes git holds', async (t) => {
+  const repo = new TestRepo();
+  t.after(() => repo.dispose());
+  // "čaša" in Windows-1250: not valid UTF-8, so a decode on the way through
+  // would turn each of these bytes into U+FFFD.
+  const bytes = Buffer.from([0xe8, 0x61, 0x9a, 0x61, 0x0a]);
+  repo.write('cp1250.txt', bytes);
+  repo.commit('Initial');
+
+  const read = await git.execBytes(repo.dir, ['cat-file', 'blob', 'HEAD:cp1250.txt']);
+  assert.deepEqual([...read], [...bytes]);
+});
+
+test('a moving name is pinned to the commit it names when asked', async (t) => {
+  const repo = new TestRepo();
+  t.after(() => repo.dispose());
+  repo.write('a.txt', 'one\n');
+  const first = repo.commit('First');
+
+  const pinned = await git.resolveCommit(repo.dir, 'HEAD');
+  repo.write('a.txt', 'two\n');
+  repo.commit('Second');
+
+  assert.equal(pinned, first);
+  assert.equal(await git.resolveCommit(repo.dir, 'main'), repo.git(['rev-parse', 'HEAD']).trim());
+});
+
+test('an annotated tag is pinned to its commit, not to the tag object', async (t) => {
+  const repo = new TestRepo();
+  t.after(() => repo.dispose());
+  repo.write('a.txt', 'one\n');
+  const commitHash = repo.commit('First');
+  repo.git(['tag', '-a', 'v1', '-m', 'Version one']);
+
+  assert.equal(await git.resolveCommit(repo.dir, 'v1'), commitHash);
+});
+
+test('a name with no commit behind it pins to nothing', async (t) => {
+  const repo = new TestRepo();
+  t.after(() => repo.dispose());
+  assert.equal(await git.resolveCommit(repo.dir, 'HEAD'), undefined, 'unborn HEAD');
+  repo.write('a.txt', 'one\n');
+  repo.commit('First');
+  assert.equal(await git.resolveCommit(repo.dir, 'no-such-branch'), undefined);
+});

@@ -4,7 +4,7 @@ import { Git } from './git/git';
 import { createDiagnostics, registerDiagnosticsCommand } from './diagnosticsFile';
 import { activateGitApi } from './gitExtension';
 import {
-  BlobContentProvider,
+  BlobFileSystem,
   BLOB_SCHEME,
   CommitContentProvider,
   COMMIT_SCHEME,
@@ -23,6 +23,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const diagnostics = createDiagnostics(context);
   const git = new Git(api.git.path);
   const provider = new ChangesViewProvider(context.extensionUri, api, git);
+  const blobs = new BlobFileSystem(git);
 
   context.subscriptions.push(
     registerDiagnosticsCommand(context),
@@ -34,10 +35,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       COMMIT_SCHEME,
       new CommitContentProvider(git)
     ),
-    vscode.workspace.registerTextDocumentContentProvider(
-      BLOB_SCHEME,
-      new BlobContentProvider(git)
-    ),
+    blobs,
+    // Case-sensitive because git's paths are, whatever the disk under them is.
+    vscode.workspace.registerFileSystemProvider(BLOB_SCHEME, blobs, {
+      isReadonly: true,
+      isCaseSensitive: true,
+    }),
     vscode.commands.registerCommand('vsGitStyle.refresh', () => provider.scheduleRefresh(0)),
     vscode.commands.registerCommand('vsGitStyle.openRepositoryWindow', () =>
       RepositoryWindow.show(context.extensionUri, api, git, undefined, diagnostics)

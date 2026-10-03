@@ -19,6 +19,16 @@
   "extensionDependencies": [
     "vscode.git"
   ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "VS Git Style runs git in the workspace, and a repository's own configuration can make git run programs of its choosing."
+    },
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "VS Git Style runs the git executable against files on disk."
+    }
+  },
   "activationEvents": [
     "onStartupFinished"
   ],

@@ -97,27 +97,53 @@ export class Git {
   constructor(private readonly gitPath: string) {}
 
   async exec(cwd: string, args: string[]): Promise<string> {
-    return new Promise<string>((resolve, reject) => {
+    return (await this.execBytes(cwd, args)).toString('utf8');
+  }
+
+  /**
+   * The output exactly as git wrote it. A file at a revision is bytes in
+   * whatever encoding it was saved in, and decoding it here as UTF-8 garbled
+   * every other encoding before VS Code could apply the user's files.encoding.
+   */
+  async execBytes(cwd: string, args: string[]): Promise<Buffer> {
+    return new Promise<Buffer>((resolve, reject) => {
       execFile(
         this.gitPath,
         args,
-        { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
-        (err, stdout, stderr) => {
+        { cwd, encoding: 'buffer', maxBuffer: 64 * 1024 * 1024 },
+        (err, stdoutBytes, stderrBytes) => {
           if (err) {
+            const stdout = stdoutBytes?.toString('utf8') ?? '';
+            const stderr = stderrBytes?.toString('utf8') ?? '';
             const wrapped = new Error(
-              failureMessage(args, stdout ?? '', stderr ?? '', err.message)
+              failureMessage(args, stdout, stderr, err.message)
             ) as GitError;
-            wrapped.stderr = stderr ?? '';
+            wrapped.stderr = stderr;
             wrapped.exitCode = typeof (err as unknown as { code?: number }).code === 'number'
               ? (err as unknown as { code: number }).code
               : 1;
             reject(wrapped);
             return;
           }
-          resolve(stdout);
+          resolve(stdoutBytes);
         }
       );
     });
+  }
+
+  /**
+   * The commit a revision names right now, or undefined when it names none -
+   * an unborn HEAD, or a ref that has gone.
+   *
+   * A document addressed by "HEAD" or a branch name is only ever read once:
+   * VS Code keeps a virtual document for as long as it is open and nothing
+   * tells it the name has moved. Pinning the name to its commit before the
+   * address is built is what keeps a diff opened after a commit from showing
+   * the one before.
+   */
+  async resolveCommit(root: string, rev: string): Promise<string | undefined> {
+    const hash = await this.tryExec(root, ['rev-parse', '-q', '--verify', `${rev}^{commit}`]);
+    return hash?.trim() || undefined;
   }
 
   private async tryExec(cwd: string, args: string[]): Promise<string | undefined> {

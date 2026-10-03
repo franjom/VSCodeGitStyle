@@ -102,6 +102,21 @@ const MUTATIONS = [
     to: '  if (false) {\n    return true;\n  }',
   },
   {
+    // A file at a revision decoded on the way through: any encoding but UTF-8
+    // reaches the diff garbled.
+    label: 'blob bytes decoded as UTF-8 before VS Code sees them',
+    file: GIT_TS,
+    from: '          resolve(stdoutBytes);',
+    to: "          resolve(Buffer.from(stdoutBytes.toString('utf8'), 'utf8'));",
+  },
+  {
+    // An annotated tag would pin to the tag object, which has no files.
+    label: 'a revision pinned without peeling it to a commit',
+    file: GIT_TS,
+    from: "['rev-parse', '-q', '--verify', `${rev}^{commit}`]",
+    to: "['rev-parse', '-q', '--verify', rev]",
+  },
+  {
     // A "../" from the webview would reach past the repository - and the
     // delete it guards moves whatever it lands on to the bin.
     label: 'a path climbing out of the repository accepted',

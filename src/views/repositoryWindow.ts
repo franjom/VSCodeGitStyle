@@ -674,13 +674,16 @@ export class RepositoryWindow {
     if (!current) {
       return;
     }
+    // Pinned once, so the file list and the diffs opened from it agree, and so
+    // a diff left open does not keep a branch's old content; see pinned().
+    const [from, to] = await Promise.all([this.pinned(current), this.pinned(ref)]);
     const done = this.diagnostics?.begin('compare', { ref, current });
     const out = await this.git.exec(this.root, [
       'diff',
       '--name-status',
       '-z',
       '-M',
-      `${current}..${ref}`,
+      `${from}..${to}`,
     ]);
     const files = parseNameStatus(out);
     done?.({ files: files.length });
@@ -710,8 +713,8 @@ export class RepositoryWindow {
     }
     await vscode.commands.executeCommand(
       'vscode.diff',
-      this.blobUri(current, picked.file.origPath ?? picked.file.path),
-      this.blobUri(ref, picked.file.path),
+      this.blobUri(from, picked.file.origPath ?? picked.file.path),
+      this.blobUri(to, picked.file.path),
       `${picked.label} (${current} ↔ ${ref})`
     );
   }
@@ -950,6 +953,15 @@ export class RepositoryWindow {
     );
   }
 
+  /**
+   * A revision as the commit it names now. A blob address must never carry a
+   * name that moves, because VS Code reads an open document once; an unborn
+   * HEAD has no commit to pin and reads as empty either way.
+   */
+  private async pinned(rev: string, root = this.root): Promise<string> {
+    return (await this.git.resolveCommit(root, rev)) ?? rev;
+  }
+
   private blobUri(rev: string, filePath: string, root = this.root): vscode.Uri {
     // The published path keeps the file name so the editor picks a language,
     // and the revision prefix keeps the two sides of a diff distinct.
@@ -977,10 +989,11 @@ export class RepositoryWindow {
     }
     const onDisk = vscode.Uri.file(path.join(worktree.path, message.path));
     const name = message.path.split('/').pop() ?? message.path;
+    const head = await this.pinned('HEAD', worktree.path);
 
     if (message.status === 'D') {
       const document = await vscode.workspace.openTextDocument(
-        this.blobUri('HEAD', message.path, worktree.path)
+        this.blobUri(head, message.path, worktree.path)
       );
       await vscode.window.showTextDocument(document, { preview: true });
       return;
@@ -993,7 +1006,7 @@ export class RepositoryWindow {
     }
     await vscode.commands.executeCommand(
       'vscode.diff',
-      this.blobUri('HEAD', message.origPath ?? message.path, worktree.path),
+      this.blobUri(head, message.origPath ?? message.path, worktree.path),
       onDisk,
       `${name} (${worktree.name})`
     );
