@@ -29,7 +29,9 @@
     filter: '',
     refFilter: '',
     collapsed: Object.assign({ incoming: false, local: false }, persisted.collapsed),
-    treeClosed: new Set(persisted.treeClosed || ['tags', 'pullRequests']),
+    // Worktrees start folded: opened, each one lists up to a cap of changed
+    // files, which buries the branches above them under rows nobody asked for.
+    treeClosed: new Set(persisted.treeClosed || ['tags', 'pullRequests', 'worktrees']),
     selected: null,
     leftWidth: persisted.leftWidth || 260,
     detailsVisible: persisted.detailsVisible !== false,

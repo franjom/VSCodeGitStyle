@@ -636,6 +636,24 @@ function inspectBranchRow() {
     });
 }
 
+/** The worktrees group starts folded; opening it shows one row per worktree. */
+function openWorktrees() {
+  const group = [...document.querySelectorAll('.left .tree-row.group-node')].find(function (row) {
+    return row.querySelector('.label').textContent === 'Worktrees';
+  });
+  const result = {
+    group: !!group,
+    startedClosed: !!group && group.getAttribute('aria-expanded') === 'false',
+    rowsWhileClosed: document.querySelectorAll('.left .tree-row.worktree').length,
+  };
+  if (group) {
+    group.click();
+  }
+  return settle().then(function () {
+    return result;
+  });
+}
+
 /** The worktrees in the branch pane: their rows, the cap, a click and a fold. */
 function inspectWorktrees() {
   const worktrees = [...document.querySelectorAll('.left .tree-row.worktree')];
@@ -1188,6 +1206,13 @@ async function main() {
       'and clicking it does nothing, rather than looking like it did',
       branch.stillOpenAfterDisabledClick,
       String(branch.stillOpenAfterDisabledClick)
+    );
+
+    const wtGroup = await evaluate(cdp, openWorktrees);
+    check(
+      'the worktrees group starts folded, with none of its rows in the DOM',
+      wtGroup.group && wtGroup.startedClosed && wtGroup.rowsWhileClosed === 0,
+      'group=' + wtGroup.group + ' closed=' + wtGroup.startedClosed + ' rows=' + wtGroup.rowsWhileClosed
     );
 
     const wt = await evaluate(cdp, inspectWorktrees);
