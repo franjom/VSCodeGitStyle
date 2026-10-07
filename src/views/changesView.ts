@@ -61,6 +61,7 @@ type Inbound =
   | { type: 'stashPush' }
   | { type: 'stash'; op: 'apply' | 'pop' | 'drop'; index: number }
   | { type: 'stashClear' }
+  | { type: 'stashView'; index: number }
   | { type: 'generateMessage' }
   | { type: 'openRepositoryWindow' };
 
@@ -474,6 +475,11 @@ export class ChangesViewProvider implements vscode.WebviewViewProvider {
 
         case 'stashClear':
           await this.stashClear(root);
+          break;
+
+        case 'stashView':
+          // Stash Details owns the stash from here; see stashDetails.ts.
+          await vscode.commands.executeCommand('vsGitStyle.showStash', root, message.index);
           break;
       }
     } catch (err) {

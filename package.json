@@ -50,9 +50,23 @@
           "id": "vsGitStyle.changes",
           "name": "Git Changes",
           "visibility": "visible"
+        },
+        {
+          "id": "vsGitStyle.stashDetails",
+          "name": "Stash Details",
+          "when": "vsGitStyle.stashDetailsOpen"
         }
       ]
     },
+    "resourceLabelFormatters": [
+      {
+        "scheme": "vsgitstyle-blob",
+        "formatting": {
+          "label": "${path}",
+          "stripPathStartingSeparator": true
+        }
+      }
+    ],
     "commands": [
       {
         "command": "vsGitStyle.refresh",
@@ -69,6 +83,33 @@
         "command": "vsGitStyle.openDiagnostics",
         "title": "Open Diagnostics Log",
         "category": "VS Git Style"
+      },
+      {
+        "command": "vsGitStyle.stashDetails.apply",
+        "title": "Apply",
+        "category": "VS Git Style"
+      },
+      {
+        "command": "vsGitStyle.stashDetails.pop",
+        "title": "Pop",
+        "category": "VS Git Style"
+      },
+      {
+        "command": "vsGitStyle.stashDetails.drop",
+        "title": "Drop…",
+        "category": "VS Git Style"
+      },
+      {
+        "command": "vsGitStyle.stashDetails.openAll",
+        "title": "Open All Changes",
+        "category": "VS Git Style",
+        "icon": "$(diff-multiple)"
+      },
+      {
+        "command": "vsGitStyle.stashDetails.close",
+        "title": "Close",
+        "category": "VS Git Style",
+        "icon": "$(close)"
       }
     ],
     "menus": {
@@ -76,13 +117,45 @@
         {
           "command": "vsGitStyle.openRepositoryWindow",
           "when": "gitOpenRepositoryCount != 0"
-        }
+        },
+        { "command": "vsGitStyle.stashDetails.apply", "when": "false" },
+        { "command": "vsGitStyle.stashDetails.pop", "when": "false" },
+        { "command": "vsGitStyle.stashDetails.drop", "when": "false" },
+        { "command": "vsGitStyle.stashDetails.openAll", "when": "false" },
+        { "command": "vsGitStyle.stashDetails.close", "when": "false" }
       ],
       "view/title": [
         {
           "command": "vsGitStyle.refresh",
           "when": "view == vsGitStyle.changes",
           "group": "navigation"
+        },
+        {
+          "command": "vsGitStyle.stashDetails.close",
+          "when": "view == vsGitStyle.stashDetails",
+          "group": "navigation"
+        },
+        {
+          "command": "vsGitStyle.stashDetails.apply",
+          "when": "view == vsGitStyle.stashDetails",
+          "group": "1_stash@1"
+        },
+        {
+          "command": "vsGitStyle.stashDetails.pop",
+          "when": "view == vsGitStyle.stashDetails",
+          "group": "1_stash@2"
+        },
+        {
+          "command": "vsGitStyle.stashDetails.drop",
+          "when": "view == vsGitStyle.stashDetails",
+          "group": "1_stash@3"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "vsGitStyle.stashDetails.openAll",
+          "when": "view == vsGitStyle.stashDetails && viewItem == stashChanges",
+          "group": "inline"
         }
       ]
     },

@@ -10,6 +10,7 @@ import {
   COMMIT_SCHEME,
 } from './views/contentProviders';
 import { RepositoryWindow } from './views/repositoryWindow';
+import { StashDetails } from './views/stashDetails';
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const outcome = await whenGitApiReady(context, (api) => start(context, api));
@@ -31,6 +32,7 @@ function start(context: vscode.ExtensionContext, api: GitApi): void {
   context.subscriptions.push(
     registerDiagnosticsCommand(context),
     provider,
+    new StashDetails(git),
     vscode.window.registerWebviewViewProvider(ChangesViewProvider.viewType, provider, {
       webviewOptions: { retainContextWhenHidden: true },
     }),

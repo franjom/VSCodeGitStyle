@@ -66,6 +66,7 @@ theme tokens so it follows the active colour theme.
 | Change-type colouring per file | done, using the theme's `gitDecoration` colours |
 | `Stashes (n)` list with `{ n } On <branch>: <message>` | done |
 | Stash apply / pop / drop, `Drop All` | done |
+| Stash `View Changes` → Stash Details | done, as a native tree view beneath Git Changes: created date, revision and base, then the stash's files as a folder tree with the theme's icons and status letters, untracked files included. A file opens its diff; Apply, Pop and Drop are in the view's `…` menu |
 | Activity-bar badge with the change count | done; see `setBadge` for why clearing it takes two writes |
 | Multiple repositories in one workspace | the extension side tracks an active repository, but the first one is shown and switching is not surfaced in the UI yet |
 

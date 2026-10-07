@@ -1034,6 +1034,11 @@
       stashRow.addEventListener('contextmenu', function (event) {
         showMenu(event, [
           {
+            label: 'View Changes',
+            run: function () { post({ type: 'stashView', index: stash.index }); },
+          },
+          '-',
+          {
             label: 'Apply',
             run: function () { post({ type: 'stash', op: 'apply', index: stash.index }); },
           },

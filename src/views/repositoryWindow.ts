@@ -1,7 +1,7 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { Git } from '../git/git';
-import { ChangePair, comparePairs, Side } from '../git/compare';
+import { ChangePair, comparePairs } from '../git/compare';
 import { refNameProblem, RefKind } from '../git/refNames';
 import { ROOT } from '../git/tree';
 import { Diagnostics } from '../diagnostics';
@@ -24,7 +24,7 @@ import {
 } from '../git/branchOps';
 import { ApiRepository, GitApi } from '../gitExtension';
 import { readWorktrees, samePath, Worktree } from '../git/worktrees';
-import { BLOB_SCHEME, COMMIT_SCHEME } from './contentProviders';
+import { BLOB_SCHEME, blobUri, COMMIT_SCHEME, openChanges } from './contentProviders';
 import { newNonce } from './nonce';
 import {
   GraphModel,
@@ -886,27 +886,8 @@ export class RepositoryWindow {
     );
   }
 
-  /**
-   * Opens every changed file at once in VS Code's multi-file changes editor,
-   * which is how Visual Studio presents a comparison: the whole set, scrolled
-   * through, rather than a list to pick from one file at a time. It renders
-   * only the files in view, so a large comparison costs what is on screen.
-   *
-   * Each entry's first URI names the file in the working tree: the editor
-   * labels the entry and picks its icon from it, while the two blob URIs are
-   * what is compared.
-   */
   private async openChanges(title: string, pairs: ChangePair[]): Promise<void> {
-    const side = (s: Side | undefined) => (s ? this.blobUri(s.rev, s.path) : undefined);
-    await vscode.commands.executeCommand(
-      'vscode.changes',
-      title,
-      pairs.map((pair) => [
-        vscode.Uri.file(path.join(this.root, pair.path)),
-        side(pair.left),
-        side(pair.right),
-      ])
-    );
+    await openChanges(this.root, title, pairs);
   }
 
   /**
@@ -919,13 +900,7 @@ export class RepositoryWindow {
   }
 
   private blobUri(rev: string, filePath: string, root = this.root): vscode.Uri {
-    // The published path keeps the file name so the editor picks a language,
-    // and the revision prefix keeps the two sides of a diff distinct.
-    return vscode.Uri.from({
-      scheme: BLOB_SCHEME,
-      path: `/${rev.replace(/[^\w.-]/g, '_')}/${filePath}`,
-      query: new URLSearchParams({ root, rev, path: filePath }).toString(),
-    });
+    return blobUri(root, rev, filePath);
   }
 
   /**

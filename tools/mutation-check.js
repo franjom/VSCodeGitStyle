@@ -166,6 +166,29 @@ const MUTATIONS = [
     to: '{ rev: from, path: file.path }',
   },
   {
+    // Stash All Changes pushes with -u, and those files live in a third parent.
+    label: "a stash's untracked files left out of View Changes",
+    file: COMPARE_TS,
+    from: '  if (untracked) {\n    const added',
+    to: '  if (false) {\n    const added',
+  },
+  {
+    // The commit's message is git's "WIP on main: <hash> <subject>" for a
+    // stash stored by hand; the list shows the reflog's.
+    label: "a stash titled by its commit message instead of its stash message",
+    file: COMPARE_TS,
+    from: "'--format=%H%x1f%cI%x1f%gs'",
+    to: "'--format=%H%x1f%cI%x1f%s'",
+  },
+  {
+    // An editor reads its document once; a side named stash@{0} shows
+    // whichever stash holds that slot when it opens.
+    label: 'a stash read by its index rather than its hash',
+    file: COMPARE_TS,
+    from: '  const pairs = comparePairs(parseNameStatus(trackedOut), base, stash);',
+    to: '  const pairs = comparePairs(parseNameStatus(trackedOut), base, `stash@{${index}}`);',
+  },
+  {
     // "@{-1}" passes on its exit code, and a branch named after the previous
     // one is made instead of the one typed.
     label: 'a branch name git rewrote taken as accepted',

@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { comparePairs } = require('../out/git/compare.js');
+const { comparePairs, pairStatus } = require('../out/git/compare.js');
 
 const FROM = 'aaaaaaa';
 const TO = 'bbbbbbb';
@@ -50,5 +50,18 @@ test('every listed file becomes one entry, in the order given', () => {
   assert.deepEqual(
     comparePairs(files, FROM, TO).map((pair) => pair.path),
     ['a', 'b', 'c']
+  );
+});
+
+test('a pair reads back as the letter its file was listed with', () => {
+  const files = [
+    { status: 'M', path: 'm' },
+    { status: 'A', path: 'a' },
+    { status: 'D', path: 'd' },
+    { status: 'R', path: 'new', origPath: 'old' },
+  ];
+  assert.deepEqual(
+    comparePairs(files, FROM, TO).map(pairStatus),
+    ['M', 'A', 'D', 'R']
   );
 });

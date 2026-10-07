@@ -5,14 +5,53 @@
  * `vscode.diff` and an ordinary editor tab - rather than reimplemented.
  *
  * They are registered once in extension.ts and are otherwise addressed only
- * through the URIs the window builds.
+ * through the URIs built here.
  */
 
+import * as path from 'path';
 import * as vscode from 'vscode';
 import { Git } from '../git/git';
+import { ChangePair, Side } from '../git/compare';
 
 export const COMMIT_SCHEME = 'vsgitstyle-commit';
 export const BLOB_SCHEME = 'vsgitstyle-blob';
+
+/**
+ * One file at one revision. The path is the file's own on disk, as the
+ * built-in `git:` scheme's is, and the revision lives only in the query.
+ *
+ * The changes editor calls an entry renamed whenever its two sides' paths
+ * differ (`modifiedUri.path!==originalUri.path`, VS Code 1.140's bundle), so a
+ * revision in the path made every file in a comparison an "R" with a hash for
+ * a folder. With the real path, the resourceLabelFormatter in package.json
+ * lets the label service show it relative to the workspace folder it is in.
+ */
+export function blobUri(root: string, rev: string, filePath: string): vscode.Uri {
+  return vscode.Uri.from({
+    scheme: BLOB_SCHEME,
+    path: vscode.Uri.file(path.join(root, filePath)).path,
+    query: new URLSearchParams({ root, rev, path: filePath }).toString(),
+  });
+}
+
+/**
+ * Opens every changed file at once in VS Code's multi-file changes editor,
+ * which is how Visual Studio presents a comparison: the whole set, scrolled
+ * through, rather than a list to pick from one file at a time. It renders
+ * only the files in view, so a large comparison costs what is on screen.
+ *
+ * Each entry's first URI names the file in the working tree: the editor
+ * labels the entry and picks its icon from it, while the two blob URIs are
+ * what is compared.
+ */
+export async function openChanges(root: string, title: string, pairs: ChangePair[]): Promise<void> {
+  const side = (s: Side | undefined) => (s ? blobUri(root, s.rev, s.path) : undefined);
+  await vscode.commands.executeCommand(
+    'vscode.changes',
+    title,
+    pairs.map((pair) => [vscode.Uri.file(path.join(root, pair.path)), side(pair.left), side(pair.right)])
+  );
+}
 
 /**
  * Backs the `vsgitstyle-blob:` scheme, so one file at one revision can be shown

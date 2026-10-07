@@ -15,6 +15,7 @@ const path = require('node:path');
 const { countChanges, Git } = require('../out/git/git.js');
 const { readGraph, readRefs, readCommitDetails, readReviewInfo } = require('../out/git/graph.js');
 const { readWorktrees } = require('../out/git/worktrees.js');
+const { readStashChanges, stashIndexOf } = require('../out/git/compare.js');
 const { TestRepo, assertLaneContinuity, assertLanesInRange } = require('./helpers.js');
 
 const git = new Git('git');
@@ -174,6 +175,74 @@ test('a stash is listed the way Visual Studio shows it', async (t) => {
   assert.equal(snapshot.stashes.length, 1);
   assert.equal(snapshot.stashes[0].index, 0);
   assert.equal(snapshot.stashes[0].label, 'On main: work in progress');
+});
+
+test('viewing a stash shows its untracked files beside its tracked changes', async (t) => {
+  const repo = new TestRepo();
+  t.after(() => repo.dispose());
+  repo.write('Modified.cs', 'one\n');
+  repo.write('Deleted.cs', 'one\n');
+  repo.commit('Initial');
+  const base = repo.git(['rev-parse', 'HEAD']).trim();
+
+  repo.write('Modified.cs', 'one\ntwo\n');
+  repo.remove('Deleted.cs');
+  repo.write('Added.cs', 'new\n');
+  repo.git(['add', 'Added.cs']);
+  repo.write('Untracked.cs', 'new\n');
+  // Stash All Changes pushes with -u, which is what puts a third parent there.
+  repo.git(['stash', 'push', '-q', '-u', '-m', 'wip']);
+  const stash = repo.git(['rev-parse', 'stash@{0}']).trim();
+  const untracked = repo.git(['rev-parse', 'stash@{0}^3']).trim();
+
+  const changes = await readStashChanges(git, repo.dir, 0);
+  assert.equal(changes.subject, 'On main: wip');
+  assert.equal(changes.hash, stash);
+  assert.equal(changes.base, base);
+  assert.ok(!isNaN(new Date(changes.created).getTime()), 'the created date parses');
+  assert.deepEqual(changes.pairs, [
+    { path: 'Added.cs', left: undefined, right: { rev: stash, path: 'Added.cs' } },
+    { path: 'Deleted.cs', left: { rev: base, path: 'Deleted.cs' }, right: undefined },
+    {
+      path: 'Modified.cs',
+      left: { rev: base, path: 'Modified.cs' },
+      right: { rev: stash, path: 'Modified.cs' },
+    },
+    { path: 'Untracked.cs', left: undefined, right: { rev: untracked, path: 'Untracked.cs' } },
+  ]);
+});
+
+test('viewing a stash names it by hash, so pushing another does not change what is shown', async (t) => {
+  const repo = new TestRepo();
+  t.after(() => repo.dispose());
+  repo.write('a.txt', 'a\n');
+  repo.commit('Initial');
+  repo.write('a.txt', 'first\n');
+  repo.git(['stash', 'push', '-q', '-m', 'first']);
+  const first = repo.git(['rev-parse', 'stash@{0}']).trim();
+
+  const changes = await readStashChanges(git, repo.dir, 0);
+  repo.write('a.txt', 'second\n');
+  repo.git(['stash', 'push', '-q', '-m', 'second']);
+
+  assert.equal(changes.pairs[0].right.rev, first);
+  assert.equal(await readStashChanges(git, repo.dir, 5), undefined, 'no such stash');
+  assert.equal(await stashIndexOf(git, repo.dir, first), 1, 'found again where it moved to');
+  repo.git(['stash', 'drop', '-q', 'stash@{1}']);
+  assert.equal(await stashIndexOf(git, repo.dir, first), undefined, 'gone once dropped');
+});
+
+test('a stash stored by hand is titled by its stash message, not by git\'s WIP line', async (t) => {
+  const repo = new TestRepo();
+  t.after(() => repo.dispose());
+  repo.write('a.txt', 'a\n');
+  repo.commit('Initial');
+  repo.write('a.txt', 'changed\n');
+  const hash = repo.git(['stash', 'create']).trim();
+  repo.git(['stash', 'store', '-m', 'On main: kept by hand', hash]);
+
+  const changes = await readStashChanges(git, repo.dir, 0);
+  assert.equal(changes.subject, 'On main: kept by hand');
 });
 
 test('a conflicted merge is reported as conflicts plus an operation', async (t) => {
