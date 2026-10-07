@@ -2,7 +2,7 @@
   "name": "vs-git-style",
   "displayName": "VS Git Style",
   "description": "Visual Studio 2026 style Git Changes panel for VS Code.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "publisher": "local",
   "private": true,
   "license": "MIT",
@@ -118,11 +118,26 @@
           "command": "vsGitStyle.openRepositoryWindow",
           "when": "gitOpenRepositoryCount != 0"
         },
-        { "command": "vsGitStyle.stashDetails.apply", "when": "false" },
-        { "command": "vsGitStyle.stashDetails.pop", "when": "false" },
-        { "command": "vsGitStyle.stashDetails.drop", "when": "false" },
-        { "command": "vsGitStyle.stashDetails.openAll", "when": "false" },
-        { "command": "vsGitStyle.stashDetails.close", "when": "false" }
+        {
+          "command": "vsGitStyle.stashDetails.apply",
+          "when": "false"
+        },
+        {
+          "command": "vsGitStyle.stashDetails.pop",
+          "when": "false"
+        },
+        {
+          "command": "vsGitStyle.stashDetails.drop",
+          "when": "false"
+        },
+        {
+          "command": "vsGitStyle.stashDetails.openAll",
+          "when": "false"
+        },
+        {
+          "command": "vsGitStyle.stashDetails.close",
+          "when": "false"
+        }
       ],
       "view/title": [
         {
